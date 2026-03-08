@@ -79,8 +79,8 @@ WSGI_APPLICATION = 'legalify_backend.wsgi.application'
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
-        'NAME': 'mydatabase',
-        'USER': 'myuser',
+        'NAME': 'workspace_files',
+        'USER': 'postgres',
         'PASSWORD': 'pass',
         'HOST': 'localhost',
         'PORT': '5432',

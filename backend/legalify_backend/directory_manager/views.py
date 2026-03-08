@@ -27,6 +27,30 @@ def create_folder(request):
     except Exception as e:
         return Response({"error": str(e)}, status=500)
 
+@api_view(['POST'])
+def upload_document(request):
+    project_id = request.data.get("project_id")
+    uploaded_file = request.FILES.get("file")
+    file_type = request.data.get("file_type")
+
+    if not project_id or not uploaded_file:
+        return Response({"error": "Missing project_id or file"}, status=400)
+
+    # 1. Save file physically
+    project_folder = os.path.join(BASE_PATH, project_id)
+    os.makedirs(project_folder, exist_ok=True)
+
+    file_path = os.path.join(project_folder, uploaded_file.name)
+    with open(file_path, 'wb') as f:
+        for chunk in uploaded_file.chunks():
+            f.write(chunk)
+
+    # 2. Save metadata in PostgreSQL
+    save_in_postgress(file_path,project_id,file_type)
+
+    return Response({"message": "Document uploaded successfully"})
+
+
 @api_view(['GET'])
 def list_projects(request):
     try:
@@ -40,3 +64,6 @@ def list_projects(request):
 
 
 
+
+
+# In your View or Serializer
