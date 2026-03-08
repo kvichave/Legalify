@@ -3,9 +3,10 @@ import { useState } from "react"
 
 export default function Home() {
 
-  const [folderName, setFolderName] = useState("")
+  const [projectName, setProjectName] = useState("")
+  const [projects, setProjects] = useState([])
 
-  const createFolder = async () => {
+  const createProject = async () => {
 
     const res = await fetch("http://127.0.0.1:8000/api/create-folder/", {
       method: "POST",
@@ -13,7 +14,7 @@ export default function Home() {
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        folder_name: folderName
+        project_name: projectName
       })
     })
 
@@ -21,25 +22,47 @@ export default function Home() {
     alert(JSON.stringify(data))
   }
 
-  return (
+  const loadProjects = async () => {
+    const res = await fetch("http://127.0.0.1:8000/api/list-projects/")
+    const data = await res.json()
+    alert(JSON.stringify(data))
+    setProjects(data.projects)
+  }
+
+  return (<>
 
     <div style={{ padding: "50px" }}>
 
-      <h2>Create Folder</h2>
+      <h2>Create Project</h2>
 
       <input
         type="text"
-        placeholder="Enter folder name"
-        value={folderName}
-        onChange={(e) => setFolderName(e.target.value)}
+        placeholder="Enter project name"
+        value={projectName}
+        onChange={(e) => setProjectName(e.target.value)}
       />
 
       <br /><br />
 
-      <button onClick={createFolder}>
+      <button onClick={createProject}>
         Create Folder
       </button>
 
+      {/* list of projects */}
+
     </div>
+
+    <div>
+      <h2>List of Projects</h2>
+      <button onClick={loadProjects}>
+        load projects
+      </button>
+      <ul>
+        {projects.map((project) => (
+          <li key={project}>{project}</li>
+        ))}
+      </ul>
+    </div>
+  </>
   )
 }
