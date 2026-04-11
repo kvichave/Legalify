@@ -1,8 +1,70 @@
+from time import sleep
 import os
+import re
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from .utils import save_in_postgress
 BASE_PATH = r"C:\Users\Kunal\Desktop\Legalify\workspaces"   # change this path
+
+
+# Regex patterns for auto-classifying files into subfolders
+CLASSIFICATION_RULES = [
+    {
+        "folder": "Master_Agreements",
+        "patterns": [
+            r"(?i)master[\s_\-]?agreement",
+            r"(?i)msa[\s_\-\.]",
+            r"(?i)service[\s_\-]?agreement",
+            r"(?i)license[\s_\-]?agreement",
+            r"(?i)nda[\s_\-\.]",
+            r"(?i)non[\s_\-]?disclosure",
+            r"(?i)framework[\s_\-]?agreement",
+            r"(?i)contract[\s_\-]?agreement",
+            r"(?i)terms[\s_\-]?(of|and)[\s_\-]?conditions",
+        ],
+    },
+    {
+        "folder": "SOW",
+        "patterns": [
+            r"(?i)sow[\s_\-\.]",
+            r"(?i)statement[\s_\-]?of[\s_\-]?work",
+            r"(?i)work[\s_\-]?order",
+            r"(?i)scope[\s_\-]?of[\s_\-]?work",
+            r"(?i)project[\s_\-]?proposal",
+            r"(?i)engagement[\s_\-]?letter",
+        ],
+    },
+    {
+        "folder": "Supporting_Docs",
+        "patterns": [
+            r"(?i)amendment",
+            r"(?i)addendum",
+            r"(?i)annex",
+            r"(?i)appendix",
+            r"(?i)exhibit",
+            r"(?i)schedule",
+            r"(?i)invoice",
+            r"(?i)receipt",
+            r"(?i)certificate",
+            r"(?i)supporting",
+            r"(?i)correspondence",
+            r"(?i)memo",
+            r"(?i)notice",
+        ],
+    },
+]
+import time
+
+def classify_file(filename):
+    time.sleep(5)
+    """Classify a file into a subfolder based on its name using regex patterns."""
+    for rule in CLASSIFICATION_RULES:
+        for pattern in rule["patterns"]:
+            if re.search(pattern, filename):
+                return rule["folder"]
+    
+    # Default: Supporting_Docs
+    return "Supporting_Docs"
 
 @api_view(['POST'])
 def create_folder(request):
@@ -93,5 +155,33 @@ def list_project_contents(request, project_name):
     return Response({"project": project_name, "contents": contents})
 
 
+@api_view(['POST'])
+def upload_and_classify(request, project_name):
+    """Upload a file and auto-classify it into the correct subfolder."""
+    uploaded_file = request.FILES.get("file")
 
+    if not uploaded_file:
+        return Response({"error": "No file provided"}, status=400)
+
+    project_path = os.path.join(BASE_PATH, project_name)
+    if not os.path.exists(project_path):
+        return Response({"error": "Project not found"}, status=404)
+
+    # Classify the file based on its name
+    classified_folder = classify_file(uploaded_file.name)
+    target_dir = os.path.join(project_path, classified_folder)
+    os.makedirs(target_dir, exist_ok=True)
+
+    # Save the file
+    file_path = os.path.join(target_dir, uploaded_file.name)
+    with open(file_path, 'wb') as f:
+        for chunk in uploaded_file.chunks():
+            f.write(chunk)
+
+    return Response({
+        "message": "File uploaded and classified successfully",
+        "filename": uploaded_file.name,
+        "classified_as": classified_folder,
+        "path": os.path.relpath(file_path, project_path),
+    })
 # In your View or Serializer
