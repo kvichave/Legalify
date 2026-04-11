@@ -2,11 +2,7 @@ import os
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from .utils import save_in_postgress
-<<<<<<< HEAD
 BASE_PATH = r"C:\Users\Kunal\Desktop\Legalify\workspaces"   # change this path
-=======
-BASE_PATH = r"C:\Users\DNFH3173\Desktop\Legalify\workspace"   # change this path
->>>>>>> e0a34486c1b38d0ed30534fd08afb72f9e467d24
 
 @api_view(['POST'])
 def create_folder(request):
@@ -67,6 +63,34 @@ def list_projects(request):
 
 
 
+@api_view(['GET'])
+def list_project_contents(request, project_name):
+    """List all files and folders within a project."""
+    project_path = os.path.join(BASE_PATH, project_name)
+
+    if not os.path.exists(project_path):
+        return Response({"error": "Project not found"}, status=404)
+
+    def get_contents(path):
+        items = []
+        try:
+            for entry in os.scandir(path):
+                item = {
+                    "name": entry.name,
+                    "type": "folder" if entry.is_dir() else "file",
+                    "path": os.path.relpath(entry.path, project_path),
+                }
+                if entry.is_file():
+                    item["size"] = entry.stat().st_size
+                if entry.is_dir():
+                    item["children"] = get_contents(entry.path)
+                items.append(item)
+        except PermissionError:
+            pass
+        return items
+
+    contents = get_contents(project_path)
+    return Response({"project": project_name, "contents": contents})
 
 
 

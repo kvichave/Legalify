@@ -1,10 +1,13 @@
 "use client"
-import { useState } from "react"
+import { useState, useEffect } from "react"
 
 export default function Home() {
 
   const [projectName, setProjectName] = useState("")
   const [projects, setProjects] = useState([])
+  useEffect(() => {
+    loadProjects()
+  }, [])
 
   const createProject = async () => {
 
@@ -25,7 +28,7 @@ export default function Home() {
   const loadProjects = async () => {
     const res = await fetch("http://127.0.0.1:8000/api/list-projects/")
     const data = await res.json()
-    alert(JSON.stringify(data))
+    // alert(JSON.stringify(data))
     setProjects(data.projects)
   }
 
