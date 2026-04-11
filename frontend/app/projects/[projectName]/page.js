@@ -7,6 +7,7 @@ export default function ProjectDetailPage() {
     const params = useParams();
     const projectName = decodeURIComponent(params.projectName);
     const [contents, setContents] = useState([]);
+    const [documentStatuses, setDocumentStatuses] = useState({});
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
     const [searchQuery, setSearchQuery] = useState("");
@@ -17,9 +18,34 @@ export default function ProjectDetailPage() {
     const [classifyingTotal, setClassifyingTotal] = useState(0);
     const fileInputRef = useRef(null);
 
+    const refreshData = async () => {
+        await fetchContents();
+        await fetchDocumentStatuses();
+    };
+
     useEffect(() => {
         fetchContents();
+        fetchDocumentStatuses();
     }, [projectName]);
+
+    const fetchDocumentStatuses = async () => {
+        try {
+            const res = await fetch(
+                `http://127.0.0.1:8000/api/projects/${encodeURIComponent(projectName)}/document-statuses/`
+            );
+            const data = await res.json();
+            if (data.documents) {
+                console.log(data.documents);
+                const statusMap = {};
+                data.documents.forEach((doc) => {
+                    statusMap[doc.file_name] = doc.status;
+                });
+                setDocumentStatuses(statusMap);
+            }
+        } catch (err) {
+            console.error("Failed to fetch document statuses:", err);
+        }
+    };
 
     // Auto-hide upload result after 4s
     useEffect(() => {
@@ -75,8 +101,9 @@ export default function ProjectDetailPage() {
                 }
             }
             setUploadResult(results);
-            // Refresh contents
+            // Refresh contents and statuses
             await fetchContents();
+            await fetchDocumentStatuses();
         } catch (err) {
             setUploadResult([{ name: "Upload", error: err.message, ok: false }]);
         } finally {
@@ -280,7 +307,7 @@ export default function ProjectDetailPage() {
             {!loading && !error && filteredContents.length > 0 && (
                 <div className="space-y-3">
                     {filteredContents.map((item) => (
-                        <ContentItem key={item.path} item={item} formatSize={formatSize} depth={0} searchQuery={searchQuery} />
+                        <ContentItem key={item.path} item={item} formatSize={formatSize} depth={0} searchQuery={searchQuery} documentStatuses={documentStatuses} projectName={projectName} onDelete={refreshData} />
                     ))}
                 </div>
             )}
@@ -288,12 +315,65 @@ export default function ProjectDetailPage() {
     );
 }
 
-function ContentItem({ item, formatSize, depth, searchQuery }) {
+function ContentItem({ item, formatSize, depth, searchQuery, documentStatuses, projectName, onDelete }) {
     const [open, setOpen] = useState(true);
+    const [menuOpen, setMenuOpen] = useState(false);
+    const [deleting, setDeleting] = useState(false);
+    const menuRef = useRef(null);
     const isFolder = item.type === "folder";
     const childCount = isFolder ? (item.children?.length || 0) : 0;
+    const fileStatus = documentStatuses[item.name];
 
-    // Highlight matching text
+    useEffect(() => {
+        const handleClickOutside = (event) => {
+            if (menuRef.current && !menuRef.current.contains(event.target)) {
+                setMenuOpen(false);
+            }
+        };
+        document.addEventListener("mousedown", handleClickOutside);
+        return () => document.removeEventListener("mousedown", handleClickOutside);
+    }, []);
+
+    const handleDelete = async () => {
+        if (!confirm(`Delete "${item.name}"? This will remove it from storage, database, and Qdrant.`)) return;
+        
+        setDeleting(true);
+        try {
+            const res = await fetch(
+                `http://127.0.0.1:8000/api/projects/${encodeURIComponent(projectName)}/delete-document/`,
+                {
+                    method: "DELETE",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ file_name: item.name, file_path: item.path }),
+                }
+            );
+            if (res.ok) {
+                await onDelete();
+            } else {
+                const data = await res.json();
+                alert(`Delete failed: ${data.error}`);
+            }
+        } catch (err) {
+            alert(`Delete failed: ${err.message}`);
+        } finally {
+            setDeleting(false);
+            setMenuOpen(false);
+        }
+    };
+
+    const getStatusBadge = (status) => {
+        switch (status) {
+            case "ready":
+                return <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-green-500/20 text-green-400">Ready</span>;
+            case "processing":
+                return <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-amber-500/20 text-amber-400">Processing</span>;
+            case "uploaded":
+                return <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-blue-500/20 text-blue-400">Uploaded</span>;
+            default:
+                return null;
+        }
+    };
+
     const highlightName = (name) => {
         if (!searchQuery.trim()) return name;
         const idx = name.toLowerCase().indexOf(searchQuery.toLowerCase());
@@ -333,7 +413,10 @@ function ContentItem({ item, formatSize, depth, searchQuery }) {
 
                 {/* Name */}
                 <div className="flex-1 min-w-0">
-                    <p className="text-white text-sm font-medium truncate">{highlightName(item.name)}</p>
+                    <div className="flex items-center gap-2">
+                        <p className="text-white text-sm font-medium truncate">{highlightName(item.name)}</p>
+                        {!isFolder && getStatusBadge(fileStatus)}
+                    </div>
                     {isFolder && (
                         <p className="text-gray-500 text-xs mt-0.5">
                             {childCount} item{childCount !== 1 ? "s" : ""}
@@ -344,6 +427,38 @@ function ContentItem({ item, formatSize, depth, searchQuery }) {
                 {/* File size */}
                 {!isFolder && item.size !== undefined && (
                     <span className="text-gray-500 text-xs">{formatSize(item.size)}</span>
+                )}
+
+                {/* 3-dot menu for files */}
+                {!isFolder && (
+                    <div className="relative" ref={menuRef}>
+                        <button
+                            onClick={(e) => { e.stopPropagation(); setMenuOpen(!menuOpen); }}
+                            disabled={deleting}
+                            className="p-1 rounded hover:bg-gray-700 text-gray-400 hover:text-white transition-colors"
+                        >
+                            {deleting ? (
+                                <div className="w-4 h-4 border-2 border-gray-400 border-t-transparent rounded-full animate-spin" />
+                            ) : (
+                                <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                                    <path d="M10 6a2 2 0 110-4 2 2 0 010 4zM10 12a2 2 0 110-4 2 2 0 010 4zM10 18a2 2 0 110-4 2 2 0 010 4z" />
+                                </svg>
+                            )}
+                        </button>
+                        {menuOpen && (
+                            <div className="absolute right-0 mt-1 w-40 bg-gray-800 border border-gray-700 rounded-lg shadow-xl z-50 overflow-hidden">
+                                <button
+                                    onClick={(e) => { e.stopPropagation(); handleDelete(); }}
+                                    className="w-full flex items-center gap-2 px-4 py-2.5 text-sm text-red-400 hover:bg-red-500/20 transition-colors"
+                                >
+                                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                    </svg>
+                                    Delete
+                                </button>
+                            </div>
+                        )}
+                    </div>
                 )}
 
                 {/* Chevron for folders */}
@@ -361,7 +476,7 @@ function ContentItem({ item, formatSize, depth, searchQuery }) {
             {isFolder && open && item.children && item.children.length > 0 && (
                 <div className="mt-1 space-y-1">
                     {item.children.map((child) => (
-                        <ContentItem key={child.path} item={child} formatSize={formatSize} depth={depth + 1} searchQuery={searchQuery} />
+                        <ContentItem key={child.path} item={child} formatSize={formatSize} depth={depth + 1} searchQuery={searchQuery} documentStatuses={documentStatuses} projectName={projectName} onDelete={onDelete} />
                     ))}
                 </div>
             )}

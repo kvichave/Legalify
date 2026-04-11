@@ -4,7 +4,8 @@ import re
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from .utils import save_in_postgress
-BASE_PATH = r"C:\Users\Kunal\Desktop\Legalify\workspaces"   # change this path
+
+BASE_PATH = r"C:\Users\Kunal\Desktop\Legalify\workspaces"  # change this path
 
 
 # Regex patterns for auto-classifying files into subfolders
@@ -55,6 +56,7 @@ CLASSIFICATION_RULES = [
 ]
 import time
 
+
 def classify_file(filename):
     time.sleep(5)
     """Classify a file into a subfolder based on its name using regex patterns."""
@@ -62,11 +64,12 @@ def classify_file(filename):
         for pattern in rule["patterns"]:
             if re.search(pattern, filename):
                 return rule["folder"]
-    
+
     # Default: Supporting_Docs
     return "Supporting_Docs"
 
-@api_view(['POST'])
+
+@api_view(["POST"])
 def create_folder(request):
 
     folder_name = request.data.get("project_name")
@@ -89,7 +92,8 @@ def create_folder(request):
     except Exception as e:
         return Response({"error": str(e)}, status=500)
 
-@api_view(['POST'])
+
+@api_view(["POST"])
 def upload_document(request):
     project_id = request.data.get("project_id")
     uploaded_file = request.FILES.get("file")
@@ -103,17 +107,20 @@ def upload_document(request):
     os.makedirs(project_folder, exist_ok=True)
 
     file_path = os.path.join(project_folder, uploaded_file.name)
-    with open(file_path, 'wb') as f:
+    with open(file_path, "wb") as f:
         for chunk in uploaded_file.chunks():
             f.write(chunk)
 
-    # 2. Save metadata in PostgreSQL
-    save_in_postgress(file_path,project_id,file_type)
+    # Save metadata in PostgreSQL
+    try:
+        save_in_postgress(file_path, project_id, file_type)
+    except Exception as e:
+        return Response({"error": f"Database save failed: {str(e)}"}, status=500)
 
     return Response({"message": "Document uploaded successfully"})
 
 
-@api_view(['GET'])
+@api_view(["GET"])
 def list_projects(request):
     try:
         projects = os.listdir(BASE_PATH)
@@ -122,10 +129,7 @@ def list_projects(request):
         return Response({"error": str(e)}, status=500)
 
 
-
-
-
-@api_view(['GET'])
+@api_view(["GET"])
 def list_project_contents(request, project_name):
     """List all files and folders within a project."""
     project_path = os.path.join(BASE_PATH, project_name)
@@ -155,7 +159,7 @@ def list_project_contents(request, project_name):
     return Response({"project": project_name, "contents": contents})
 
 
-@api_view(['POST'])
+@api_view(["POST"])
 def upload_and_classify(request, project_name):
     """Upload a file and auto-classify it into the correct subfolder."""
     uploaded_file = request.FILES.get("file")
@@ -174,14 +178,79 @@ def upload_and_classify(request, project_name):
 
     # Save the file
     file_path = os.path.join(target_dir, uploaded_file.name)
-    with open(file_path, 'wb') as f:
+    with open(file_path, "wb") as f:
         for chunk in uploaded_file.chunks():
             f.write(chunk)
 
-    return Response({
-        "message": "File uploaded and classified successfully",
-        "filename": uploaded_file.name,
-        "classified_as": classified_folder,
-        "path": os.path.relpath(file_path, project_path),
-    })
-# In your View or Serializer
+    # Save metadata in PostgreSQL
+    try:
+        save_in_postgress(file_path, project_name, classified_folder)
+    except Exception as e:
+        return Response({"error": f"Database save failed: {str(e)}"}, status=500)
+
+    return Response(
+        {
+            "message": "File uploaded and classified successfully",
+            "filename": uploaded_file.name,
+            "classified_as": classified_folder,
+            "path": os.path.relpath(file_path, project_path),
+        }
+    )
+
+
+@api_view(["GET"])
+def get_document_statuses(request, project_name):
+    """Get document statuses for a project."""
+    from .models import Document, Project
+
+    try:
+        project = Project.objects.get(name=project_name)
+        documents = Document.objects.filter(project=project).values(
+            "file_name", "file_type", "status", "created_at"
+        )
+        return Response({"documents": list(documents)})
+    except Project.DoesNotExist:
+        return Response({"documents": []})
+    except Exception as e:
+        return Response({"error": str(e)}, status=500)
+
+
+@api_view(["DELETE"])
+def delete_document(request, project_name):
+    """Delete a document from folder, database, and Qdrant."""
+    from .models import Document, Project
+    from .vector_service import delete_document_vectors
+
+    file_name = request.data.get("file_name")
+    file_path = request.data.get("file_path")
+
+    if not file_name:
+        return Response({"error": "file_name is required"}, status=400)
+
+    try:
+        project = Project.objects.get(name=project_name)
+
+        document = Document.objects.filter(project=project, file_name=file_name).first()
+
+        if document:
+            collection_name = f"project_{project_name}_category_{document.file_type}"
+            try:
+                delete_document_vectors(document.id, collection_name)
+            except Exception as e:
+                logger.warning(f"Failed to delete vectors from Qdrant: {e}")
+
+            document.delete()
+        r_project_path = os.path.join(BASE_PATH, project_name)
+        file_path = r_project_path + "/" + file_path
+        if file_path and os.path.exists(file_path):
+            os.remove(file_path)
+
+        else:
+            print("File not found", file_path)
+
+        return Response({"message": f"Document '{file_name}' deleted successfully"})
+
+    except Project.DoesNotExist:
+        return Response({"error": "Project not found"}, status=404)
+    except Exception as e:
+        return Response({"error": str(e)}, status=500)
