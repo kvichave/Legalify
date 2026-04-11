@@ -2,7 +2,11 @@ import os
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from .utils import save_in_postgress
+<<<<<<< HEAD
 BASE_PATH = r"C:\Users\Kunal\Desktop\Legalify\workspaces"   # change this path
+=======
+BASE_PATH = r"C:\Users\DNFH3173\Desktop\Legalify\workspace"   # change this path
+>>>>>>> e0a34486c1b38d0ed30534fd08afb72f9e467d24
 
 @api_view(['POST'])
 def create_folder(request):
