@@ -1,7 +1,7 @@
 import os
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
-from .utils import extract_data
+from .utils import save_in_postgress
 BASE_PATH = r"C:\Users\Kunal\Desktop\Legalify\workspaces"   # change this path
 
 @api_view(['POST'])

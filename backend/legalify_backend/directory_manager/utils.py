@@ -1,4 +1,4 @@
-from models import Document
+from .models import Document
 
 def save_in_postgress(file_path,project_id,file_type):
     Document.objects.create(
@@ -11,3 +11,4 @@ def save_in_postgress(file_path,project_id,file_type):
         "file_size": file_path.size
     }
     )
+    
