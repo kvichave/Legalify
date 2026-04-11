@@ -64,7 +64,10 @@ function Sidebar() {
                     <SidebarItem expanded={expanded} label="Search" theme={theme}
                         icon={<path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />}
                     />
-                    <SidebarItem expanded={expanded} label="Insights" theme={theme} active
+                    <SidebarItem expanded={expanded} label="Chat" theme={theme} href="/chat"
+                        icon={<path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />}
+                    />
+                    <SidebarItem expanded={expanded} label="Insights" theme={theme}
                         icon={<path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 8v8m-4-5v5m-4-2v2m-2 4h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />}
                     />
                     <SidebarItem expanded={expanded} label="Docs" theme={theme}

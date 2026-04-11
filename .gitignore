@@ -2,3 +2,7 @@
 ./backend/venv/*
 /QDRANT
 ./QDRANT
+/backend/.env
+/backend/.env/*
+/backend/legalify_backend/.env
+/backend/legalify_backend/.env/*

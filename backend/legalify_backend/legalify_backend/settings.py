@@ -38,6 +38,7 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'directory_manager',
+    'agents_orch',
 ]
 
 MIDDLEWARE = [

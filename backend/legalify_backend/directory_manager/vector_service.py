@@ -148,3 +148,35 @@ def delete_document_vectors(document_id, collection_name):
     except Exception as e:
         logger.error(f"Error deleting vectors from Qdrant: {e}")
         raise
+
+
+def search_vectors(collection_name, query_embedding, limit=5):
+    """Search for similar vectors in a collection."""
+    try:
+        client = get_qdrant_client()
+
+        search_result = client.query_points(
+            collection_name=collection_name,
+            query=query_embedding,
+            limit=limit,
+            with_payload=True,
+        )
+
+        chunks = []
+        points = (
+            search_result.points if hasattr(search_result, "points") else search_result
+        )
+        for point in points:
+            payload = point.payload or {}
+            chunks.append(
+                {
+                    "text": payload.get("text", ""),
+                    "file_path": payload.get("file_path", ""),
+                    "score": point.score,
+                }
+            )
+
+        return chunks
+    except Exception as e:
+        logger.error(f"Error searching vectors in {collection_name}: {e}")
+        return []
