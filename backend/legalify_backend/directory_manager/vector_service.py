@@ -1,11 +1,13 @@
 import os
 import logging
 from qdrant_client import QdrantClient
-from qdrant_client.models import Distance, VectorParams, PointStruct
 from sentence_transformers import SentenceTransformer
-import uuid
 import PyPDF2
 import docx
+from langchain_qdrant import QdrantVectorStore, FastEmbedSparse
+from langchain_core.documents import Document
+from langchain_core.embeddings import Embeddings
+from langchain_classic.retrievers import EnsembleRetriever
 
 logger = logging.getLogger(__name__)
 
@@ -15,6 +17,20 @@ EMBEDDING_MODEL = "all-MiniLM-L6-v2"
 
 _client = None
 _model = None
+
+
+class SentenceTransformerEmbeddings(Embeddings):
+    def __init__(self, model_name: str):
+        self.model = SentenceTransformer(model_name)
+
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        return self.model.encode(texts, show_progress_bar=False).tolist()
+
+    def embed_query(self, text: str) -> list[float]:
+        return self.model.encode([text], show_progress_bar=False)[0].tolist()
+
+    def encode(self, texts, **kwargs):
+        return self.model.encode(texts, **kwargs)
 
 
 def get_qdrant_client():
@@ -27,7 +43,7 @@ def get_qdrant_client():
 def get_embedding_model():
     global _model
     if _model is None:
-        _model = SentenceTransformer(EMBEDDING_MODEL)
+        _model = SentenceTransformerEmbeddings(EMBEDDING_MODEL)
     return _model
 
 
@@ -57,56 +73,6 @@ def extract_text_from_file(file_path):
         return ""
 
 
-def store_document_vector(document_id, file_path, collection_name="legal_documents"):
-    """Store document embedding in Qdrant and return the vector ID."""
-    try:
-        client = get_qdrant_client()
-        model = get_embedding_model()
-
-        client.recreate_collection(
-            collection_name=collection_name,
-            vectors_config=VectorParams(
-                size=model.get_sentence_embedding_dimension(), distance=Distance.COSINE
-            ),
-        )
-
-        text = extract_text_from_file(file_path)
-        if not text.strip():
-            logger.warning(f"No text extracted from {file_path}")
-            return None
-
-        chunks = split_into_chunks(text, chunk_size=500)
-
-        points = []
-        for i, chunk in enumerate(chunks):
-            embedding = model.encode(chunk).tolist()
-            point_id = str(uuid.uuid4())
-            points.append(
-                PointStruct(
-                    id=point_id,
-                    vector=embedding,
-                    payload={
-                        "document_id": str(document_id),
-                        "chunk_index": i,
-                        "text": chunk,
-                        "file_path": file_path,
-                    },
-                )
-            )
-
-        client.upsert(
-            collection_name=collection_name,
-            points=points,
-        )
-
-        logger.info(f"Stored {len(points)} chunks for document {document_id} in Qdrant")
-        return True
-
-    except Exception as e:
-        logger.error(f"Error storing vector in Qdrant: {e}")
-        raise
-
-
 def split_into_chunks(text, chunk_size=500):
     """Split text into overlapping chunks."""
     words = text.split()
@@ -118,61 +84,123 @@ def split_into_chunks(text, chunk_size=500):
     return chunks
 
 
+def store_document_vector(document_id, file_path, collection_name="legal_documents"):
+    """Store document embedding in Qdrant using LangChain hybrid search."""
+    try:
+        embeddings = get_embedding_model()
+        client = get_qdrant_client()
+
+        text = extract_text_from_file(file_path)
+        if not text.strip():
+            logger.warning(f"No text extracted from {file_path}")
+            return None
+
+        chunks = split_into_chunks(text, chunk_size=500)
+
+        documents = []
+        for i, chunk in enumerate(chunks):
+            doc = Document(
+                page_content=chunk,
+                metadata={
+                    "document_id": str(document_id),
+                    "chunk_index": i,
+                    "file_path": file_path,
+                },
+            )
+            documents.append(doc)
+
+        vector_store = QdrantVectorStore.from_documents(
+            documents=documents,
+            embedding=embeddings,
+            sparse_embedding=FastEmbedSparse(),
+            client=client,
+            collection_name=collection_name,
+        )
+
+        logger.info(
+            f"Stored {len(documents)} chunks for document {document_id} in Qdrant"
+        )
+        return True
+
+    except Exception as e:
+        logger.error(f"Error storing vector in Qdrant: {e}")
+        raise
+
+
 def delete_document_vectors(document_id, collection_name):
     """Delete all vector points for a document from Qdrant."""
     try:
         client = get_qdrant_client()
 
-        scroll_result = client.scroll(
-            collection_name=collection_name,
-            scroll_filter=None,
-            limit=100,
-            with_payload=True,
-        )
-
-        points_to_delete = []
-        for point in scroll_result[0]:
-            if point.payload and point.payload.get("document_id") == str(document_id):
-                points_to_delete.append(point.id)
-
-        if points_to_delete:
-            client.delete(
+        offset = None
+        while True:
+            scroll_result = client.scroll(
                 collection_name=collection_name,
-                points_selector=points_to_delete,
-            )
-            logger.info(
-                f"Deleted {len(points_to_delete)} vectors for document {document_id}"
+                scroll_filter=None,
+                limit=100,
+                with_payload=True,
+                offset=offset,
             )
 
+            points_to_delete = []
+            for point in scroll_result[0]:
+                if point.payload and point.payload.get("document_id") == str(
+                    document_id
+                ):
+                    points_to_delete.append(point.id)
+
+            if points_to_delete:
+                client.delete(
+                    collection_name=collection_name,
+                    points_selector=points_to_delete,
+                )
+
+            if scroll_result[1] is None:
+                break
+            offset = scroll_result[1]
+
+        logger.info(f"Deleted vectors for document {document_id}")
         return True
     except Exception as e:
         logger.error(f"Error deleting vectors from Qdrant: {e}")
         raise
 
 
-def search_vectors(collection_name, query_embedding, limit=5):
-    """Search for similar vectors in a collection."""
+def search_vectors(collection_name, query_embedding, query_text="", limit=5):
+    """Hybrid search using LangChain EnsembleRetriever with dense and sparse retrievers."""
     try:
+        embeddings = get_embedding_model()
         client = get_qdrant_client()
 
-        search_result = client.query_points(
+        dense_vector_store = QdrantVectorStore(
+            client=client,
             collection_name=collection_name,
-            query=query_embedding,
-            limit=limit,
-            with_payload=True,
+            embedding=embeddings,
         )
 
-        chunks = []
-        points = (
-            search_result.points if hasattr(search_result, "points") else search_result
+        sparse_vector_store = QdrantVectorStore(
+            client=client,
+            collection_name=collection_name,
+            embedding=FastEmbedSparse(),
         )
-        for point in points:
-            payload = point.payload or {}
+
+        dense_retriever = dense_vector_store.as_retriever(search_kwargs={"k": limit})
+        sparse_retriever = sparse_vector_store.as_retriever(search_kwargs={"k": limit})
+
+        ensemble_retriever = EnsembleRetriever(
+            retrievers=[dense_retriever, sparse_retriever],
+            weights=[0.5, 0.5],
+        )
+
+        results = ensemble_retriever.invoke(query_text)
+
+        chunks = []
+        for doc in results:
             chunks.append(
                 {
-                    "text": payload.get("text", ""),
-                    "file_path": payload.get("file_path", ""),
-                    "score": point.score,
+                    "text": doc.page_content,
+                    "file_path": doc.metadata.get("file_path", ""),
+                    "score": 1.0,
                 }
             )
 

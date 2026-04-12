@@ -4,7 +4,7 @@ import logging
 import os
 from dotenv import load_dotenv
 
-load_dotenv()   
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +43,9 @@ def chat(request):
 
         for collection in collection_names:
             try:
-                chunks = search_vectors(collection, query_embedding, limit=5)
+                chunks = search_vectors(
+                    collection, query_embedding, query_text=message, limit=5
+                )
                 all_chunks.extend(chunks)
             except Exception as e:
                 logger.warning(f"Error searching collection {collection}: {e}")
@@ -77,7 +79,9 @@ Answer:"""
         try:
             from openai import OpenAI
 
-            client = OpenAI(api_key=os.getenv("OPENROUTER"), base_url="https://openrouter.ai/api/v1")
+            client = OpenAI(
+                api_key=os.getenv("OPENROUTER"), base_url="https://openrouter.ai/api/v1"
+            )
             response = client.chat.completions.create(
                 model="nvidia/nemotron-3-super-120b-a12b:free",
                 messages=[{"role": "user", "content": prompt}],

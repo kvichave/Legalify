@@ -289,7 +289,7 @@ function Message({ message }) {
                                             key={i}
                                             className="text-xs text-gray-400 bg-gray-700/50 px-2 py-0.5 rounded"
                                         >
-                                            {src.split("/").pop()}
+                                            {src.includes("workspaces") ? "\\" + src.split("workspaces\\")[1] : src.split("/").pop()}
                                         </span>
                                     ))}
                                 </div>
