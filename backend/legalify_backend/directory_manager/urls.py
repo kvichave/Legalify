@@ -6,11 +6,13 @@ from .views import (
     upload_and_classify,
     get_document_statuses,
     delete_document,
+    get_stats,
 )
 
 urlpatterns = [
-    path("create-folder/", create_folder),
+    path("create-project/", create_folder),
     path("list-projects/", list_projects),
+    path("stats/", get_stats),
     path("projects/<str:project_name>/contents/", list_project_contents),
     path("projects/<str:project_name>/upload-classify/", upload_and_classify),
     path("projects/<str:project_name>/document-statuses/", get_document_statuses),

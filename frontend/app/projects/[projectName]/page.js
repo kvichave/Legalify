@@ -446,7 +446,17 @@ function ContentItem({ item, formatSize, depth, searchQuery, documentStatuses, p
                             )}
                         </button>
                         {menuOpen && (
-                            <div className="absolute right-0 mt-1 w-40 bg-gray-800 border border-gray-700 rounded-lg shadow-xl z-50 overflow-hidden">
+                            <div className="absolute right-0 mt-1 w-48 bg-gray-800 border border-gray-700 rounded-lg shadow-xl z-50 overflow-hidden">
+                                <Link
+                                    href={`/contracts/${item.id}`}
+                                    className="w-full flex items-center gap-2 px-4 py-2.5 text-sm text-indigo-400 hover:bg-indigo-500/20 transition-colors"
+                                >
+                                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
+                                    </svg>
+                                    Analyze Contract
+                                </Link>
+                                <div className="border-t border-gray-700" />
                                 <button
                                     onClick={(e) => { e.stopPropagation(); handleDelete(); }}
                                     className="w-full flex items-center gap-2 px-4 py-2.5 text-sm text-red-400 hover:bg-red-500/20 transition-colors"

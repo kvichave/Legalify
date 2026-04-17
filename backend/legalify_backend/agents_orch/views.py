@@ -4,7 +4,7 @@ import logging
 import os
 from dotenv import load_dotenv
 
-load_dotenv()   
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 
@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 @api_view(["POST"])
 def chat(request):
     """Chat with vector data from selected projects."""
-    from directory_manager.vector_service import search_vectors, get_embedding_model
+    from directory_manager.vector_service import search_vectors
     from directory_manager.models import Document, Project
 
     message = request.data.get("message", "").strip()
@@ -38,12 +38,9 @@ def chat(request):
             except Project.DoesNotExist:
                 continue
 
-        model = get_embedding_model()
-        query_embedding = model.encode(message).tolist()
-
         for collection in collection_names:
             try:
-                chunks = search_vectors(collection, query_embedding, limit=5)
+                chunks = search_vectors(message, collection, limit=5)
                 all_chunks.extend(chunks)
             except Exception as e:
                 logger.warning(f"Error searching collection {collection}: {e}")
@@ -57,7 +54,7 @@ def chat(request):
             )
 
         context = "\n\n".join([c["text"] for c in all_chunks[:10]])
-        sources = list(set([c.get("file_path", "Unknown") for c in all_chunks]))
+        sources = list(set([c.get("source", "Unknown") for c in all_chunks]))
 
         prompt = f"""You are a helpful legal assistant. Based on the following context from legal documents, answer the user's question.
 
@@ -77,7 +74,9 @@ Answer:"""
         try:
             from openai import OpenAI
 
-            client = OpenAI(api_key=os.getenv("OPENROUTER"), base_url="https://openrouter.ai/api/v1")
+            client = OpenAI(
+                api_key=os.getenv("OPENROUTER"), base_url="https://openrouter.ai/api/v1"
+            )
             response = client.chat.completions.create(
                 model="nvidia/nemotron-3-super-120b-a12b:free",
                 messages=[{"role": "user", "content": prompt}],
@@ -90,9 +89,13 @@ Answer:"""
             answer = (
                 f"Based on the documents, here is what I found:\n\n{context[:1500]}..."
             )
-            
+
         return Response({"answer": answer, "sources": sources[:5]})
 
     except Exception as e:
         logger.error(f"Chat error: {e}")
         return Response({"error": str(e)}, status=500)
+
+
+
+

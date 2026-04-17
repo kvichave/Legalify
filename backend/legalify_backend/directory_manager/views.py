@@ -5,7 +5,7 @@ from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from .utils import save_in_postgress
 
-BASE_PATH = r"C:\Users\Kunal\Desktop\Legalify\workspaces"  # change this path
+BASE_PATH = r"C:\Users\DNFH3173\Desktop\Legalify\workspaces"  # change this path
 
 
 # Regex patterns for auto-classifying files into subfolders
@@ -132,22 +132,48 @@ def list_projects(request):
 @api_view(["GET"])
 def list_project_contents(request, project_name):
     """List all files and folders within a project."""
+    from .models import Document, Project
+
     project_path = os.path.join(BASE_PATH, project_name)
 
     if not os.path.exists(project_path):
         return Response({"error": "Project not found"}, status=404)
 
+    try:
+        project = Project.objects.get(name=project_name)
+        docs = Document.objects.filter(project=project)
+        doc_map = {}
+        for doc in docs:
+            if doc.file_path:
+                doc_map[doc.file_path] = doc.id
+                doc_map[os.path.basename(doc.file_path)] = doc.id
+                rel = (
+                    doc.file_path.replace(BASE_PATH, "")
+                    .lstrip("\\")
+                    .lstrip("/")
+                    .replace("\\", "/")
+                )
+                doc_map[rel] = doc.id
+    except Project.DoesNotExist:
+        doc_map = {}
+
     def get_contents(path):
         items = []
         try:
             for entry in os.scandir(path):
+                rel_path = os.path.relpath(entry.path, project_path)
                 item = {
                     "name": entry.name,
                     "type": "folder" if entry.is_dir() else "file",
-                    "path": os.path.relpath(entry.path, project_path),
+                    "path": rel_path,
                 }
                 if entry.is_file():
                     item["size"] = entry.stat().st_size
+                    item["id"] = (
+                        str(doc_map.get(rel_path))
+                        or str(doc_map.get(entry.name))
+                        or None
+                    )
                 if entry.is_dir():
                     item["children"] = get_contents(entry.path)
                 items.append(item)
@@ -237,7 +263,7 @@ def delete_document(request, project_name):
             try:
                 delete_document_vectors(document.id, collection_name)
             except Exception as e:
-                logger.warning(f"Failed to delete vectors from Qdrant: {e}")
+                print(f"Failed to delete vectors from Qdrant: {e}")
 
             document.delete()
         r_project_path = os.path.join(BASE_PATH, project_name)
@@ -252,5 +278,46 @@ def delete_document(request, project_name):
 
     except Project.DoesNotExist:
         return Response({"error": "Project not found"}, status=404)
+    except Exception as e:
+        return Response({"error": str(e)}, status=500)
+
+
+@api_view(["GET"])
+def get_stats(request):
+    """Get overall statistics for Legalify."""
+    from .models import Document, Project
+
+    try:
+        projects_count = Project.objects.count()
+        documents_count = Document.objects.count()
+        embeddings_count = 0
+
+        client = None
+        try:
+            from .vector_service import get_qdrant_client
+
+            client = get_qdrant_client()
+        except Exception:
+            pass
+
+        if client:
+            try:
+                collections = client.get_collections().collections
+                for coll in collections:
+                    try:
+                        info = client.get_collection(coll.name)
+                        embeddings_count += info.vectors_count
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+        return Response(
+            {
+                "projects": projects_count,
+                "documents": documents_count,
+                "embeddings": embeddings_count,
+            }
+        )
     except Exception as e:
         return Response({"error": str(e)}, status=500)
