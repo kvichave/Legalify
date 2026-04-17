@@ -4,6 +4,10 @@ import re
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from .utils import save_in_postgress
+import os
+import logging
+
+logger = logging.getLogger(__name__)
 
 BASE_PATH = r"C:\Users\DNFH3173\Desktop\Legalify\workspaces"  # change this path
 
@@ -283,6 +287,66 @@ def delete_document(request, project_name):
 
 
 @api_view(["GET"])
+def get_document_content(request, project_name, document_id):
+    """Get the content of a document by its ID."""
+    from .models import Document, Project
+
+    try:
+        project = Project.objects.get(name=project_name)
+        document = Document.objects.get(id=document_id, project=project)
+        file_path = document.file_path
+
+        if not file_path or not os.path.exists(file_path):
+            return Response({"error": "File not found on disk"}, status=404)
+
+        file_ext = os.path.splitext(file_path)[1].lower()
+        if file_ext == ".pdf":
+            return Response(
+                {"error": "PDF files cannot be displayed as text"}, status=400
+            )
+
+        with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+            content = f.read()
+
+        return Response({"content": content, "filename": document.file_name})
+    except Project.DoesNotExist:
+        return Response({"error": "Project not found"}, status=404)
+    except Document.DoesNotExist:
+        return Response({"error": "Document not found"}, status=404)
+    except Exception as e:
+        return Response({"error": str(e)}, status=500)
+
+
+from django.http import FileResponse, Http404
+
+
+@api_view(["GET"])
+def download_document(request):
+    """Download a document by project name and file path."""
+    project_name = request.GET.get("project")
+    file_path = request.GET.get("path")
+
+    if not project_name or not file_path:
+        return Response({"error": "Project and path are required"}, status=400)
+
+    try:
+        full_path = os.path.join(BASE_PATH, project_name, file_path.replace("\\", "/"))
+
+        if not os.path.exists(full_path):
+            return Response({"error": "File not found"}, status=404)
+
+        response = FileResponse(open(full_path, "rb"), content_type="application/pdf")
+        response["Content-Disposition"] = (
+            f'inline; filename="{os.path.basename(full_path)}"'
+        )
+        return response
+
+    except Exception as e:
+        logger.error(f"Download error: {e}")
+        return Response({"error": str(e)}, status=500)
+
+
+@api_view(["GET"])
 def get_stats(request):
     """Get overall statistics for Legalify."""
     from .models import Document, Project
@@ -320,4 +384,424 @@ def get_stats(request):
             }
         )
     except Exception as e:
+        return Response({"error": str(e)}, status=500)
+
+
+@api_view(["POST"])
+def compare_documents(request):
+    """Compare two documents and return differences using AI."""
+    from .models import Document, Project
+    from dotenv import load_dotenv
+
+    load_dotenv()
+
+    document_a_id = request.data.get("document_a_id")
+    document_b_id = request.data.get("document_b_id")
+    project_name = request.data.get("project_name")
+
+    if not document_a_id or not document_b_id:
+        return Response(
+            {"error": "Both document_a_id and document_b_id are required"}, status=400
+        )
+
+    try:
+        if project_name:
+            project = Project.objects.get(name=project_name)
+            doc_a = Document.objects.get(id=document_a_id, project=project)
+            doc_b = Document.objects.get(id=document_b_id, project=project)
+        else:
+            doc_a = Document.objects.get(id=document_a_id)
+            doc_b = Document.objects.get(id=document_b_id)
+
+        content_a = ""
+        content_b = ""
+
+        if doc_a.file_path and os.path.exists(doc_a.file_path):
+            with open(doc_a.file_path, "r", encoding="utf-8", errors="ignore") as f:
+                content_a = f.read()
+
+        if doc_b.file_path and os.path.exists(doc_b.file_path):
+            with open(doc_b.file_path, "r", encoding="utf-8", errors="ignore") as f:
+                content_b = f.read()
+
+        if not content_a or not content_b:
+            return Response(
+                {
+                    "error": "Could not read document content. Only text files are supported.",
+                    "content_a": content_a[:500] if content_a else "",
+                    "content_b": content_b[:500] if content_b else "",
+                },
+                status=400,
+            )
+
+        prompt = f"""You are a legal document comparison assistant. Compare the two contract documents below and identify key differences.
+
+Document A ({doc_a.file_name}):
+{content_a[:8000]}
+
+Document B ({doc_b.file_name}):
+{content_b[:8000]}
+
+Analyze both documents and provide:
+1. A brief summary of what each document covers
+2. Key clauses that differ between the documents
+3. Important clauses that are similar or identical
+4. Any significant legal implications of the differences
+
+Provide your response in JSON format:
+{{
+    "summary": "Brief comparison summary",
+    "differences": [
+        {{
+            "clause": "Name of the clause/section",
+            "text_a": "Text from Document A",
+            "text_b": "Text from Document B",
+            "impact": "Impact of this difference"
+        }}
+    ],
+    "similarities": [
+        {{
+            "clause": "Name of the clause/section",
+            "text": "The similar text"
+        }}
+    ]
+}}"""
+
+        try:
+            from openai import OpenAI
+
+            client = OpenAI(
+                api_key=os.getenv("OPENROUTER"), base_url="https://openrouter.ai/api/v1"
+            )
+            response = client.chat.completions.create(
+                model="nvidia/nemotron-3-super-120b-a12b:free",
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.3,
+                max_tokens=2000,
+            )
+            ai_result = response.choices[0].message.content
+
+            import json
+
+            try:
+                result_json = json.loads(ai_result)
+                return Response(
+                    {
+                        "summary": result_json.get("summary", ""),
+                        "differences": result_json.get("differences", []),
+                        "similarities": result_json.get("similarities", []),
+                        "raw_ai_response": ai_result,
+                    }
+                )
+            except json.JSONDecodeError:
+                return Response(
+                    {
+                        "summary": ai_result,
+                        "differences": [],
+                        "similarities": [],
+                        "raw_ai_response": ai_result,
+                    }
+                )
+
+        except Exception as e:
+            logger.error(f"LLM error in comparison: {e}")
+            return Response(
+                {
+                    "summary": f"Comparison completed but AI analysis failed: {str(e)}",
+                    "differences": [],
+                    "similarities": [],
+                    "content_a_preview": content_a[:2000],
+                    "content_b_preview": content_b[:2000],
+                }
+            )
+
+    except Document.DoesNotExist as e:
+        return Response({"error": f"Document not found: {str(e)}"}, status=404)
+    except Exception as e:
+        logger.error(f"Comparison error: {e}")
+        return Response({"error": str(e)}, status=500)
+
+
+@api_view(["POST"])
+def compare_documents_simple(request):
+    """Simple text-based comparison of two documents without AI."""
+    from .models import Document, Project
+
+    document_a_id = request.data.get("document_a_id")
+    document_b_id = request.data.get("document_b_id")
+    project_name = request.data.get("project_name")
+    file_a_path = request.data.get("file_a_path")
+    file_b_path = request.data.get("file_b_path")
+
+    logger.info(
+        f"compare_documents_simple called: doc_a_id={document_a_id}, doc_b_id={document_b_id}, project={project_name}, file_a={file_a_path}, file_b={file_b_path}"
+    )
+
+    try:
+        doc_a = None
+        doc_b = None
+        content_a = ""
+        content_b = ""
+        name_a = "Document A"
+        name_b = "Document B"
+
+        if document_a_id and str(document_a_id).lower() not in ["none", "null", ""]:
+            try:
+                if project_name:
+                    project = Project.objects.get(name=project_name)
+                    doc_a = Document.objects.get(id=document_a_id, project=project)
+                else:
+                    doc_a = Document.objects.get(id=document_a_id)
+                logger.info(f"Found doc_a: {doc_a.file_name}")
+            except (Document.DoesNotExist, ValueError) as e:
+                logger.warning(f"doc_a not found: {e}")
+
+        if document_b_id and str(document_b_id).lower() not in ["none", "null", ""]:
+            try:
+                if project_name:
+                    project = Project.objects.get(name=project_name)
+                    doc_b = Document.objects.get(id=document_b_id, project=project)
+                else:
+                    doc_b = Document.objects.get(id=document_b_id)
+                logger.info(f"Found doc_b: {doc_b.file_name}")
+            except (Document.DoesNotExist, ValueError) as e:
+                logger.warning(f"doc_b not found: {e}")
+
+        if doc_a and doc_a.file_path and os.path.exists(doc_a.file_path):
+            with open(doc_a.file_path, "r", encoding="utf-8", errors="ignore") as f:
+                content_a = f.read()
+            name_a = doc_a.file_name
+            logger.info(f"Loaded content from doc_a.file_path: {len(content_a)} chars")
+
+        if file_a_path and not content_a:
+            full_path = os.path.join(
+                BASE_PATH, project_name, file_a_path.replace("\\", "/")
+            )
+            logger.info(f"Trying to load from file path: {full_path}")
+            if os.path.exists(full_path):
+                with open(full_path, "r", encoding="utf-8", errors="ignore") as f:
+                    content_a = f.read()
+                name_a = os.path.basename(file_a_path)
+                logger.info(f"Loaded content from file_a_path: {len(content_a)} chars")
+            else:
+                logger.warning(f"File not found: {full_path}")
+
+        if doc_b and doc_b.file_path and os.path.exists(doc_b.file_path):
+            with open(doc_b.file_path, "r", encoding="utf-8", errors="ignore") as f:
+                content_b = f.read()
+            name_b = doc_b.file_name
+            logger.info(f"Loaded content from doc_b.file_path: {len(content_b)} chars")
+
+        if file_b_path and not content_b:
+            full_path = os.path.join(
+                BASE_PATH, project_name, file_b_path.replace("\\", "/")
+            )
+            logger.info(f"Trying to load from file path: {full_path}")
+            if os.path.exists(full_path):
+                with open(full_path, "r", encoding="utf-8", errors="ignore") as f:
+                    content_b = f.read()
+                name_b = os.path.basename(file_b_path)
+                logger.info(f"Loaded content from file_b_path: {len(content_b)} chars")
+            else:
+                logger.warning(f"File not found: {full_path}")
+
+        return Response(
+            {
+                "document_a": {
+                    "id": str(doc_a.id) if doc_a else None,
+                    "name": name_a,
+                    "content": content_a,
+                },
+                "document_b": {
+                    "id": str(doc_b.id) if doc_b else None,
+                    "name": name_b,
+                    "content": content_b,
+                },
+                "content_a_length": len(content_a),
+                "content_b_length": len(content_b),
+            }
+        )
+
+    except Exception as e:
+        logger.error(f"Simple comparison error: {e}", exc_info=True)
+        return Response({"error": str(e)}, status=500)
+
+
+@api_view(["GET"])
+def get_pdf_highlights(request):
+    """Get positions of specific lines/text in a PDF for highlighting."""
+    project_name = request.GET.get("project")
+    file_path = request.GET.get("path")
+    line_number = request.GET.get("line")
+    text = request.GET.get("text")
+
+    if not project_name or not file_path:
+        return Response({"error": "Project and path are required"}, status=400)
+
+    try:
+        full_path = os.path.join(BASE_PATH, project_name, file_path.replace("\\", "/"))
+
+        if not os.path.exists(full_path):
+            return Response({"error": "File not found"}, status=404)
+
+        try:
+            import fitz
+        except ImportError:
+            return Response({"error": "PyMuPDF not installed"}, status=500)
+
+        doc = fitz.open(full_path)
+        highlights = []
+
+        for page_num in range(len(doc)):
+            page = doc[page_num]
+            text_dict = page.get_text("dict")
+
+            page_height = page.rect.height
+            page_width = page.rect.width
+
+            current_line = 1
+
+            for block in text_dict.get("blocks", []):
+                if block.get("type") == 0:
+                    for line in block.get("lines", []):
+                        bbox = line.get("bbox", (0, 0, 0, 0))
+                        line_text = " ".join(
+                            [span.get("text", "") for span in line.get("spans", [])]
+                        )
+
+                        if isinstance(bbox, tuple) and len(bbox) == 4:
+                            x0, y0, x1, y1 = bbox
+                        else:
+                            x0, y0, x1, y1 = 0, 0, 0, 0
+
+                        if line_number and current_line == int(line_number):
+                            highlights.append(
+                                {
+                                    "page": page_num + 1,
+                                    "x0": x0,
+                                    "y0": y0,
+                                    "x1": x1,
+                                    "y1": y1,
+                                    "text": line_text,
+                                    "normalized_y0": y0 / page_height
+                                    if page_height
+                                    else 0,
+                                    "normalized_y1": y1 / page_height
+                                    if page_height
+                                    else 0,
+                                }
+                            )
+
+                        if text and text.lower() in line_text.lower():
+                            highlights.append(
+                                {
+                                    "page": page_num + 1,
+                                    "x0": x0,
+                                    "y0": y0,
+                                    "x1": x1,
+                                    "y1": y1,
+                                    "text": line_text,
+                                    "normalized_y0": y0 / page_height
+                                    if page_height
+                                    else 0,
+                                    "normalized_y1": y1 / page_height
+                                    if page_height
+                                    else 0,
+                                }
+                            )
+
+                        current_line += 1
+
+        doc.close()
+
+        return Response(
+            {
+                "highlights": highlights,
+                "total_pages": len(fitz.open(full_path)),
+            }
+        )
+
+    except Exception as e:
+        logger.error(f"PDF highlight error: {e}", exc_info=True)
+        return Response({"error": str(e)}, status=500)
+
+
+@api_view(["GET"])
+def get_pdf_text_lines(request):
+    """Get all text lines from a PDF with their positions."""
+    project_name = request.GET.get("project")
+    file_path = request.GET.get("path")
+    page = request.GET.get("page")
+
+    if not project_name or not file_path:
+        return Response({"error": "Project and path are required"}, status=400)
+
+    try:
+        full_path = os.path.join(BASE_PATH, project_name, file_path.replace("\\", "/"))
+
+        if not os.path.exists(full_path):
+            return Response({"error": "File not found"}, status=404)
+
+        try:
+            import fitz
+        except ImportError:
+            return Response({"error": "PyMuPDF not installed"}, status=500)
+
+        doc = fitz.open(full_path)
+        lines = []
+
+        page_num = int(page) - 1 if page else 0
+        target_page = doc[page_num] if page_num < len(doc) else doc[0]
+        page_height = target_page.rect.height
+        page_width = target_page.rect.width
+
+        text_dict = target_page.get_text("dict")
+        line_num = 1
+
+        for block in text_dict.get("blocks", []):
+            if block.get("type") == 0:
+                for line in block.get("lines", []):
+                    bbox = line.get("bbox", (0, 0, 0, 0))
+                    text = " ".join(
+                        [span.get("text", "") for span in line.get("spans", [])]
+                    )
+
+                    if isinstance(bbox, tuple) and len(bbox) == 4:
+                        x0, y0, x1, y1 = bbox
+                    else:
+                        x0, y0, x1, y1 = 0, 0, 0, 0
+
+                    lines.append(
+                        {
+                            "line_number": line_num,
+                            "text": text,
+                            "page": page_num + 1,
+                            "x0": round(x0, 2),
+                            "y0": round(y0, 2),
+                            "x1": round(x1, 2),
+                            "y1": round(y1, 2),
+                            "normalized_y0": round(y0 / page_height, 4)
+                            if page_height
+                            else 0,
+                            "normalized_y1": round(y1 / page_height, 4)
+                            if page_height
+                            else 0,
+                        }
+                    )
+                    line_num += 1
+
+        doc.close()
+
+        return Response(
+            {
+                "lines": lines,
+                "total_lines": len(lines),
+                "page": page_num + 1,
+                "page_height": page_height,
+                "page_width": page_width,
+            }
+        )
+
+    except Exception as e:
+        logger.error(f"PDF text lines error: {e}", exc_info=True)
         return Response({"error": str(e)}, status=500)

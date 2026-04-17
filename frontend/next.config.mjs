@@ -4,7 +4,8 @@ const nextConfig = {
   allowedDevOrigins: [
     "http://192.168.0.184:3000",
     "http://localhost:3000",
-    "192.168.0.184"
+    "192.168.0.184",
+    "192.168.0.157",
   ],
 
 };

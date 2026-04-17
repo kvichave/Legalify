@@ -7,6 +7,12 @@ from .views import (
     get_document_statuses,
     delete_document,
     get_stats,
+    get_document_content,
+    compare_documents,
+    compare_documents_simple,
+    download_document,
+    get_pdf_highlights,
+    get_pdf_text_lines,
 )
 
 urlpatterns = [
@@ -17,4 +23,13 @@ urlpatterns = [
     path("projects/<str:project_name>/upload-classify/", upload_and_classify),
     path("projects/<str:project_name>/document-statuses/", get_document_statuses),
     path("projects/<str:project_name>/delete-document/", delete_document),
+    path(
+        "projects/<str:project_name>/documents/<int:document_id>/content/",
+        get_document_content,
+    ),
+    path("download/", download_document),
+    path("compare/", compare_documents),
+    path("compare/simple/", compare_documents_simple),
+    path("pdf/highlights/", get_pdf_highlights),
+    path("pdf/text-lines/", get_pdf_text_lines),
 ]
