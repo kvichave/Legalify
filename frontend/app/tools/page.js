@@ -16,7 +16,7 @@ const tools = [
     name: "Contract Comparison",
     description: "Compare multiple contracts side-by-side. Identify differences, inconsistencies, and alignment opportunities.",
     icon: "compare",
-    href: "/compare",
+    href: "/contracts/compare",
     color: "bg-blue-600",
   },
   {
