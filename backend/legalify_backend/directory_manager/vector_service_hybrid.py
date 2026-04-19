@@ -240,3 +240,87 @@ def search_vectors_hybrid(query, collection_name="legal_documents_hybrid", limit
     except Exception as e:
         logger.error(f"Error in hybrid search: {e}")
         raise
+
+
+def get_document_chunks(document_id, collection_name="legal_documents_hybrid"):
+    """Retrieve all chunks for a specific document from Qdrant."""
+    try:
+        client = get_qdrant_client()
+
+        from qdrant_client.models import Filter, HasIdCondition
+
+        scroll_result = client.scroll(
+            collection_name=collection_name,
+            scroll_filter=Filter(
+                must=[
+                    HasIdCondition(
+                        condition="should",
+                        ids=[str(document_id)],
+                    )
+                ]
+            ) if False else None,
+            limit=1000,
+            with_payload=True,
+        )
+
+        chunks = []
+        for point in scroll_result[0]:
+            if point.payload and point.payload.get("document_id") == str(document_id):
+                chunks.append({
+                    "id": point.id,
+                    "chunk_index": point.payload.get("chunk_index"),
+                    "text": point.payload.get("text"),
+                    "document_id": point.payload.get("document_id"),
+                    "file_path": point.payload.get("file_path"),
+                })
+
+        chunks.sort(key=lambda x: x.get("chunk_index", 0))
+        logger.info(f"Retrieved {len(chunks)} chunks for document {document_id}")
+        return chunks
+
+    except Exception as e:
+        logger.error(f"Error getting document chunks: {e}")
+        return []
+
+
+def search_similar_chunks(document_id, target_document_id, collection_name="legal_documents_hybrid", limit=10):
+    """Search for chunks in target document similar to source document chunks."""
+    try:
+        source_chunks = get_document_chunks(document_id, collection_name)
+        if not source_chunks:
+            return []
+
+        client = get_qdrant_client()
+        dense_model = get_dense_embedding_model()
+
+        similar_chunks = []
+        for chunk in source_chunks[:5]:
+            query_embedding = list(dense_model.query_embed([chunk["text"]]))[0]
+
+            results = client.query_points(
+                collection_name=collection_name,
+                query=query_embedding,
+                limit=limit,
+                with_payload=True,
+                query_filter=Filter(
+                    must_not=[
+                        {"field": "document_id", "match": {"value": str(document_id)}}
+                    ]
+                ),
+            )
+
+            for point in results.points:
+                if point.payload.get("document_id") == str(target_document_id):
+                    similar_chunks.append({
+                        "id": point.id,
+                        "score": point.score,
+                        "text": point.payload.get("text"),
+                        "chunk_index": point.payload.get("chunk_index"),
+                    })
+
+        similar_chunks.sort(key=lambda x: x.get("score", 0), reverse=True)
+        return similar_chunks[:limit]
+
+    except Exception as e:
+        logger.error(f"Error searching similar chunks: {e}")
+        return []

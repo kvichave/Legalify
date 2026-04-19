@@ -10,9 +10,11 @@ from .views import (
     get_document_content,
     compare_documents,
     compare_documents_simple,
+    compare_documents_with_embeddings,
     download_document,
     get_pdf_highlights,
     get_pdf_text_lines,
+    get_document_embeddings,
 )
 
 urlpatterns = [
@@ -30,6 +32,8 @@ urlpatterns = [
     path("download/", download_document),
     path("compare/", compare_documents),
     path("compare/simple/", compare_documents_simple),
+    path("compare/embeddings/", compare_documents_with_embeddings),
+    path("document/embeddings/", get_document_embeddings),
     path("pdf/highlights/", get_pdf_highlights),
     path("pdf/text-lines/", get_pdf_text_lines),
 ]

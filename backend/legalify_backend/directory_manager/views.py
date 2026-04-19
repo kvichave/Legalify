@@ -323,6 +323,8 @@ from django.http import FileResponse, Http404
 @api_view(["GET"])
 def download_document(request):
     """Download a document by project name and file path."""
+    from .models import Document, Project
+
     project_name = request.GET.get("project")
     file_path = request.GET.get("path")
 
@@ -335,11 +337,28 @@ def download_document(request):
         if not os.path.exists(full_path):
             return Response({"error": "File not found"}, status=404)
 
-        response = FileResponse(open(full_path, "rb"), content_type="application/pdf")
-        response["Content-Disposition"] = (
-            f'inline; filename="{os.path.basename(full_path)}"'
-        )
+        try:
+            project = Project.objects.get(name=project_name)
+            file_name = os.path.basename(file_path)
+            document = Document.objects.filter(project=project, file_name=file_name).first()
+            document_id = str(document.id) if document else None
+        except Exception as e:
+            logger.error(f"Error finding document: {e}")
+            document_id = None
+
+        file_handle = open(full_path, "rb")
+        response = FileResponse(file_handle, content_type="application/pdf")
+        response["Content-Disposition"] = "inline; filename=\"" + os.path.basename(full_path) + "\""
+        response["Access-Control-Expose-Headers"] = "X-Document-Id"
+        if document_id:
+            response["X-Document-Id"] = document_id
+        print(f"Serving file: {full_path} with document_id: {document_id}")
+        print(response.items())
         return response
+
+    except Exception as e:
+        logger.error(f"Download error: {e}")
+        return Response({"error": str(e)}, status=500)
 
     except Exception as e:
         logger.error(f"Download error: {e}")
@@ -804,4 +823,188 @@ def get_pdf_text_lines(request):
 
     except Exception as e:
         logger.error(f"PDF text lines error: {e}", exc_info=True)
+        return Response({"error": str(e)}, status=500)
+
+
+@api_view(["GET"])
+def get_document_embeddings(request):
+    """Get embeddings for a document from Qdrant."""
+    project_name = request.GET.get("project")
+    document_id = request.GET.get("document_id")
+
+    if not document_id or str(document_id).lower() in ["none", "null", ""]:
+        return Response({"error": "document_id is required"}, status=400)
+
+    try:
+        from .vector_service_hybrid import get_document_chunks
+        from .models import Document, Project
+
+        doc = None
+        if project_name:
+            try:
+                project = Project.objects.get(name=project_name)
+                doc = Document.objects.get(id=document_id, project=project)
+            except (Document.DoesNotExist, Project.DoesNotExist):
+                pass
+        if not doc:
+            doc = Document.objects.get(id=document_id)
+
+        if not doc:
+            return Response({"error": "Document not found"}, status=404)
+
+        chunks = get_document_chunks(str(doc.id), collection_name="legal_documents_hybrid")
+
+        return Response({
+            "document_id": str(doc.id),
+            "document_name": doc.file_name,
+            "chunks": chunks,
+            "chunks_count": len(chunks) if chunks else 0,
+        })
+
+    except Exception as e:
+        logger.error(f"Error getting document embeddings: {e}", exc_info=True)
+        return Response({"error": str(e)}, status=500)
+
+
+@api_view(["POST"])
+def compare_documents_with_embeddings(request):
+    """Compare two documents using embeddings and AI."""
+    from .models import Document, Project
+    from .vector_service_hybrid import get_document_chunks, search_similar_chunks
+    from dotenv import load_dotenv
+    import json
+
+    load_dotenv()
+
+    document_a_id = request.data.get("document_a_id")
+    document_b_id = request.data.get("document_b_id")
+    project_name = request.data.get("project_name")
+    document_a_type=request.data.get("document_a").get("path").split("\\")[0]
+    document_b_type=request.data.get("document_b").get("path").split("\\")[0]
+    print(f"Received compare_documents_with_embeddings request: document_a_id={document_a_id}, document_b_id={document_b_id}, project_name={project_name}, document_a={document_a_type}, document_b={document_b_type}")
+    print(f"compare_documents_with_embeddings called with: document_a_id={document_a_id}, document_b_id={document_b_id}, project_name={project_name}")
+
+    if not document_a_id or not document_b_id:
+        return Response(
+            {"error": "Both document_a_id and document_b_id are required"}, status=400
+        )
+
+    if str(document_a_id).lower() in ["none", "null", ""] or str(document_b_id).lower() in ["none", "null", ""]:
+        return Response(
+            {"error": "Both document_a_id and document_b_id are required"}, status=400
+        )
+
+    try:
+        doc_a = None
+        doc_b = None
+
+        if project_name:
+            try:
+                project = Project.objects.get(name=project_name)
+                doc_a = Document.objects.get(id=document_a_id, project=project)
+                doc_b = Document.objects.get(id=document_b_id, project=project)
+            except (Document.DoesNotExist, Project.DoesNotExist):
+                pass
+        if not doc_a:
+            doc_a = Document.objects.get(id=document_a_id)
+        if not doc_b:
+            doc_b = Document.objects.get(id=document_b_id)
+        
+        print("project name:", project_name)
+
+        chunks_a = get_document_chunks(str(doc_a.id), collection_name="project_" + project_name + "_category_"+document_a_type)
+        chunks_b = get_document_chunks(str(doc_b.id), collection_name="project_" + project_name + "_category_"+document_b_type)
+
+        if not chunks_a or not chunks_b:
+            return Response({
+                "error": "Embeddings not found for one or both documents. Please ensure documents have been indexed.",
+                "document_a_has_embeddings": bool(chunks_a),
+                "document_b_has_embeddings": bool(chunks_b),
+            }, status=400)
+
+        all_chunks_a = [c["text"] for c in chunks_a]
+        all_chunks_b = [c["text"] for c in chunks_b]
+
+        context_a = "\n\n".join(all_chunks_a[:20])
+        context_b = "\n\n".join(all_chunks_b[:20])
+
+        prompt = f"""You are a legal document comparison assistant. Compare the two contract documents below and identify key differences.
+
+Document A ({doc_a.file_name}):
+{context_a[:15000]}
+
+Document B ({doc_b.file_name}):
+{context_b[:15000]}
+
+Analyze both documents and provide:
+1. A brief summary of what each document covers
+2. Key clauses that differ between the documents
+3. Important clauses that are similar or identical
+4. Any significant legal implications of the differences
+
+Provide your response in JSON format:
+{{
+    "summary": "Brief comparison summary",
+    "differences": [
+        {{
+            "clause": "Name of the clause/section",
+            "text_a": "Text from Document A",
+            "text_b": "Text from Document B",
+            "impact": "Impact of this difference"
+        }}
+    ],
+    "similarities": [
+        {{
+            "clause": "Name of the clause/section",
+            "text": "The similar text"
+        }}
+    ]
+}}"""
+
+        try:
+            from openai import OpenAI
+
+            client = OpenAI(
+                api_key=os.getenv("OPENROUTER"), base_url="https://openrouter.ai/api/v1"
+            )
+            response = client.chat.completions.create(
+                model="nvidia/nemotron-3-super-120b-a12b:free",
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.3,
+                max_tokens=2000,
+            )
+            ai_result = response.choices[0].message.content
+
+            try:
+                result_json = json.loads(ai_result)
+                return Response({
+                    "document_a_id": str(doc_a.id),
+                    "document_b_id": str(doc_b.id),
+                    "document_a_name": doc_a.file_name,
+                    "document_b_name": doc_b.file_name,
+                    "summary": result_json.get("summary", ""),
+                    "differences": result_json.get("differences", []),
+                    "similarities": result_json.get("similarities", []),
+                })
+            except json.JSONDecodeError:
+                return Response({
+                    "document_a_id": str(doc_a.id),
+                    "document_b_id": str(doc_b.id),
+                    "document_a_name": doc_a.file_name,
+                    "document_b_name": doc_b.file_name,
+                    "summary": ai_result,
+                    "differences": [],
+                    "similarities": [],
+                })
+
+        except Exception as e:
+            logger.error(f"LLM error in comparison: {e}")
+            return Response({
+                "error": f"LLM error: {str(e)}"
+            }, status=500)
+
+    except Document.DoesNotExist as e:
+        return Response({"error": f"Document not found: {str(e)}"}, status=404)
+    except Exception as e:
+        logger.error(f"Comparison error with embeddings: {e}", exc_info=True)
         return Response({"error": str(e)}, status=500)

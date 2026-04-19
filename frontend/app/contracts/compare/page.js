@@ -1,6 +1,7 @@
 "use client";
 import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
 
 const PDFViewer = dynamic(() => import("@embedpdf/react-pdf-viewer").then(mod => mod.PDFViewer), { 
@@ -13,6 +14,7 @@ const PDFViewer = dynamic(() => import("@embedpdf/react-pdf-viewer").then(mod =>
 });
 
 export default function ContractComparePage() {
+    const router = useRouter();
     const [leftDoc, setLeftDoc] = useState(null);
     const [rightDoc, setRightDoc] = useState(null);
     const [showLeftPicker, setShowLeftPicker] = useState(false);
@@ -25,6 +27,8 @@ export default function ContractComparePage() {
     const [pickerContents, setPickerContents] = useState([]);
     const [pickerLoading, setPickerLoading] = useState(false);
     const [error, setError] = useState(null);
+    const [leftPDFid, setLeftPDFid] = useState(null);
+    const [rightPDFid, setRightPDFid] = useState(null); 
 
     const [highlightLine, setHighlightLine] = useState(3);
     const [leftHighlights, setLeftHighlights] = useState([]);
@@ -32,10 +36,16 @@ export default function ContractComparePage() {
     const [leftPageInfo, setLeftPageInfo] = useState({ height: 0, width: 0 });
     const [rightPageInfo, setRightPageInfo] = useState({ height: 0, width: 0 });
     const [showHighlightPanel, setShowHighlightPanel] = useState(false);
+    const [compareLoading, setCompareLoading] = useState(false);
+    const [compareResults, setCompareResults] = useState(null);
 
     useEffect(() => {
         loadProjects();
     }, []);
+
+    const clearComparison = () => {
+        setCompareResults(null);
+    };
 
     const loadProjects = async () => {
         try {
@@ -71,7 +81,7 @@ export default function ContractComparePage() {
         }
     }, [pickerProject]);
 
-    const loadPdf = async (doc, setPdfUrl) => {
+const loadPdf = async (doc, setPdfUrl, setDoc, setPdfId) => {
         if (!doc || !doc.path) return;
 
         setLoading(true);
@@ -85,10 +95,17 @@ export default function ContractComparePage() {
             if (!res.ok) {
                 throw new Error("Failed to download PDF");
             }
+            console.log("Download response headers:", doc.path);
+            const documentId = res.headers.get("X-Document-Id");
+            console.log("Download response - header documentId:", documentId);
             
             const blob = await res.blob();
             const url = URL.createObjectURL(blob);
             setPdfUrl(url);
+            
+            if (setPdfId && documentId) {
+                setPdfId(documentId);
+            }
         } catch (err) {
             console.error("Failed to load PDF:", err);
             setError(err.message);
@@ -131,8 +148,9 @@ export default function ContractComparePage() {
         setLeftDoc(doc);
         setLeftPdfUrl(null);
         setLeftHighlights([]);
+        setLeftPDFid(null);
         setShowLeftPicker(false);
-        loadPdf(doc, setLeftPdfUrl);
+        loadPdf(doc, setLeftPdfUrl, setLeftDoc, setLeftPDFid);
         fetchHighlights(doc, setLeftHighlights, setLeftPageInfo);
     };
 
@@ -141,8 +159,9 @@ export default function ContractComparePage() {
         setRightDoc(doc);
         setRightPdfUrl(null);
         setRightHighlights([]);
+        setRightPDFid(null);
         setShowRightPicker(false);
-        loadPdf(doc, setRightPdfUrl);
+        loadPdf(doc, setRightPdfUrl, setRightDoc, setRightPDFid);
         fetchHighlights(doc, setRightHighlights, setRightPageInfo);
     };
 
@@ -160,6 +179,48 @@ export default function ContractComparePage() {
 
     const hasBothPdfs = leftDoc && rightDoc && leftPdfUrl && rightPdfUrl;
     const isLoading = loading && (leftDoc || rightDoc);
+
+    const runComparison = async () => {
+        console.log("Running comparison with:", { leftPDFid, rightPDFid });
+        
+        if (!leftPDFid || !rightPDFid) {
+            console.error("Missing document IDs:", { leftPDFid, rightPDFid });
+            return;
+        }
+        
+        setCompareLoading(true);
+        setCompareResults(null);
+        try {
+            const res = await fetch("http://127.0.0.1:8000/api/compare/embeddings/", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    document_a_id: leftPDFid,
+                    document_b_id: rightPDFid,
+                    document_a: leftDoc,
+                    document_b: rightDoc,
+                    project_name: leftDoc?.project || pickerProject,
+                }),
+            });
+            const data = await res.json();
+            
+            if (data.error) {
+                console.error("Comparison error:", data.error);
+                setCompareResults(data);
+                return;
+            }
+            
+            console.log("Comparison response:", data);
+            setCompareResults(data);
+            
+            sessionStorage.setItem("compareResults", JSON.stringify(data));
+            router.push("/contracts/compare/results");
+        } catch (err) {
+            console.error("Comparison error:", err);
+        } finally {
+            setCompareLoading(false);
+        }
+    };
 
     return (
         <div className="h-screen bg-gray-950 flex flex-col overflow-hidden">
@@ -234,28 +295,94 @@ export default function ContractComparePage() {
                     </div>
 
                     {hasBothPdfs && (
-                        <div className="ml-auto flex items-center gap-2 text-xs text-gray-400">
-                            <span className="px-2 py-1 bg-green-500/20 text-green-400 rounded">
-                                Viewing PDFs side by side
-                            </span>
+                        <div className="ml-auto flex items-center gap-2">
+                            <button
+                                onClick={runComparison}
+                                disabled={compareLoading}
+                                className="px-3 py-1.5 text-xs bg-indigo-600 hover:bg-indigo-700 text-white rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                            >
+                                {compareLoading ? (
+                                    <>
+                                        <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                                        Comparing...
+                                    </>
+                                ) : (
+                                    "AI Compare"
+                                )}
+                            </button>
                         </div>
+)}
+                </div>
+            </div>
+
+            <div className="px-6 py-3 bg-gray-900/50 border-b border-gray-800 flex-shrink-0">
+                <div className="flex items-center gap-6 text-sm">
+                    <span className="text-gray-400">Current Highlight:</span>
+                    <span className="px-3 py-1 bg-yellow-500/20 text-yellow-400 rounded">
+                        Line {highlightLine}
+                    </span>
+                    {leftHighlights.length > 0 && (
+                        <span className="text-gray-500">
+                            "{leftHighlights[0].text.substring(0, 40)}..."
+                        </span>
                     )}
                 </div>
             </div>
 
-            {showHighlightPanel && (
-                <div className="px-6 py-3 bg-gray-900/50 border-b border-gray-800 flex-shrink-0">
-                    <div className="flex items-center gap-6 text-sm">
-                        <span className="text-gray-400">Current Highlight:</span>
-                        <span className="px-3 py-1 bg-yellow-500/20 text-yellow-400 rounded">
-                            Line {highlightLine}
-                        </span>
-                        {leftHighlights.length > 0 && (
-                            <span className="text-gray-500">
-                                "{leftHighlights[0].text.substring(0, 40)}..."
-                            </span>
-                        )}
+            {compareResults && (
+                <div className="px-6 py-4 bg-gray-900 border-b border-gray-800 max-h-64 overflow-y-auto flex-shrink-0">
+                    <div className="flex items-center justify-between mb-3">
+                        <h3 className="text-sm font-semibold text-white">AI Comparison Results</h3>
+                        <button
+                            onClick={() => setCompareResults(null)}
+                            className="text-gray-400 hover:text-white"
+                        >
+                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                            </svg>
+                        </button>
                     </div>
+                    {compareResults.error ? (
+                        <div className="text-red-400 text-sm">{compareResults.error}</div>
+                    ) : (
+                        <div className="space-y-4">
+                            {compareResults.summary && (
+                                <div className="text-gray-300 text-sm">{compareResults.summary}</div>
+                            )}
+                            {compareResults.differences?.length > 0 && (
+                                <div>
+                                    <h4 className="text-xs font-medium text-red-400 mb-2">Differences</h4>
+                                    <div className="space-y-2">
+                                        {compareResults.differences.map((diff, i) => (
+                                            <div key={i} className="bg-red-900/20 border border-red-800 rounded-lg p-3">
+                                                <div className="text-sm font-medium text-red-300">{diff.clause}</div>
+                                                <div className="mt-2 text-xs text-gray-400">
+                                                    <div className="mb-1"><span className="text-blue-400">A:</span> {diff.text_a?.substring(0, 200)}...</div>
+                                                    <div><span className="text-green-400">B:</span> {diff.text_b?.substring(0, 200)}...</div>
+                                                </div>
+                                                {diff.impact && (
+                                                    <div className="mt-2 text-xs text-yellow-400">{diff.impact}</div>
+                                                )}
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+                            {compareResults.similarities?.length > 0 && (
+                                <div>
+                                    <h4 className="text-xs font-medium text-green-400 mb-2">Similar Clauses</h4>
+                                    <div className="space-y-2">
+                                        {compareResults.similarities.map((sim, i) => (
+                                            <div key={i} className="bg-green-900/20 border border-green-800 rounded-lg p-3">
+                                                <div className="text-sm font-medium text-green-300">{sim.clause}</div>
+                                                <div className="mt-1 text-xs text-gray-400">{sim.text?.substring(0, 200)}...</div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    )}
                 </div>
             )}
 
