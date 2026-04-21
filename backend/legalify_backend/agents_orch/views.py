@@ -3,10 +3,14 @@ from rest_framework.response import Response
 import logging
 import os
 from dotenv import load_dotenv
+from .chat_agent import ChatAgent
+
 
 load_dotenv()
 
 logger = logging.getLogger(__name__)
+
+
 
 
 @api_view(["POST"])
@@ -56,34 +60,14 @@ def chat(request):
         context = "\n\n".join([c["text"] for c in all_chunks[:10]])
         sources = list(set([c.get("source", "Unknown") for c in all_chunks]))
 
-        prompt = f"""You are a helpful legal assistant. Based on the following context from legal documents, answer the user's question.
-
-Context:
-{context}
-
-User Question: {message}
-
-Instructions:
-- Provide a clear, direct answer based only on the context provided
-- If the context doesn't contain enough information to fully answer the question, state what you know and what you're uncertain about
-- Be precise and cite specific details when available
-- Keep your response concise but informative
-
-Answer:"""
-
         try:
-            from openai import OpenAI
-
-            client = OpenAI(
-                api_key=os.getenv("OPENROUTER"), base_url="https://openrouter.ai/api/v1"
-            )
-            response = client.chat.completions.create(
-                model="nvidia/nemotron-3-super-120b-a12b:free",
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.3,
-                max_tokens=1000,
-            )
-            answer = response.choices[0].message.content
+            llm = get_llm()
+            print("LLM initialized successfully")
+            chat_agent = ChatAgent(llm=llm)
+            print(f"Invoking chat agent with message: {message} and context length: {len(context)}")
+            result = chat_agent.chat(message=message, context=context)
+            messages = result.get("messages", [])
+            answer = messages[-1].content if messages else ""
         except Exception as e:
             logger.error(f"LLM error: {e}")
             answer = (

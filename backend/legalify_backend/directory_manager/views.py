@@ -1,13 +1,27 @@
 from time import sleep
 import os
 import re
+import json
+import logging
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from .utils import save_in_postgress
-import os
-import logging
+
+from agents_orch.compare_documents_agent import CompareDocumentsAgent
+from agents_orch.compare_embeddings_agent import CompareWithEmbeddingsAgent
+from dotenv import load_dotenv
+
+load_dotenv()
 
 logger = logging.getLogger(__name__)
+
+
+def get_llm():
+    from openai import OpenAI
+
+    return OpenAI(
+        api_key=os.getenv("OPENROUTER"), base_url="https://openrouter.ai/api/v1"
+    )
 
 BASE_PATH = r"C:\Users\DNFH3173\Desktop\Legalify\workspaces"  # change this path
 
@@ -406,14 +420,36 @@ def get_stats(request):
         return Response({"error": str(e)}, status=500)
 
 
+import json
+import os
+
+from django.conf import settings
+from dotenv import load_dotenv
+from rest_framework.decorators import api_view
+from rest_framework.response import Response
+
+from .models import Document, Project
+from .vector_service_hybrid import get_document_chunks
+
+from agents_orch.compare_documents_agent import CompareDocumentsAgent
+from agents_orch.compare_embeddings_agent import CompareWithEmbeddingsAgent
+
+load_dotenv()
+
+logger = logging.getLogger(__name__)
+
+
+def get_llm():
+    from openai import OpenAI
+
+    return OpenAI(
+        api_key=os.getenv("OPENROUTER"), base_url="https://openrouter.ai/api/v1"
+    )
+
+
 @api_view(["POST"])
 def compare_documents(request):
     """Compare two documents and return differences using AI."""
-    from .models import Document, Project
-    from dotenv import load_dotenv
-
-    load_dotenv()
-
     document_a_id = request.data.get("document_a_id")
     document_b_id = request.data.get("document_b_id")
     project_name = request.data.get("project_name")
@@ -453,54 +489,18 @@ def compare_documents(request):
                 status=400,
             )
 
-        prompt = f"""You are a legal document comparison assistant. Compare the two contract documents below and identify key differences.
-
-Document A ({doc_a.file_name}):
-{content_a[:8000]}
-
-Document B ({doc_b.file_name}):
-{content_b[:8000]}
-
-Analyze both documents and provide:
-1. A brief summary of what each document covers
-2. Key clauses that differ between the documents
-3. Important clauses that are similar or identical
-4. Any significant legal implications of the differences
-
-Provide your response in JSON format:
-{{
-    "summary": "Brief comparison summary",
-    "differences": [
-        {{
-            "clause": "Name of the clause/section",
-            "text_a": "Text from Document A",
-            "text_b": "Text from Document B",
-            "impact": "Impact of this difference"
-        }}
-    ],
-    "similarities": [
-        {{
-            "clause": "Name of the clause/section",
-            "text": "The similar text"
-        }}
-    ]
-}}"""
-
         try:
-            from openai import OpenAI
-
-            client = OpenAI(
-                api_key=os.getenv("OPENROUTER"), base_url="https://openrouter.ai/api/v1"
+            llm = get_llm()
+            agent = CompareDocumentsAgent(llm=llm)
+            result = agent.compare(
+                document_a_content=content_a,
+                document_b_content=content_b,
+                doc_a_name=doc_a.file_name,
+                doc_b_name=doc_b.file_name,
             )
-            response = client.chat.completions.create(
-                model="nvidia/nemotron-3-super-120b-a12b:free",
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.3,
-                max_tokens=2000,
-            )
-            ai_result = response.choices[0].message.content
 
-            import json
+            messages = result.get("messages", [])
+            ai_result = messages[-1].content if messages else ""
 
             try:
                 result_json = json.loads(ai_result)
@@ -871,16 +871,13 @@ def compare_documents_with_embeddings(request):
     """Compare two documents using embeddings and AI."""
     from .models import Document, Project
     from .vector_service_hybrid import get_document_chunks, search_similar_chunks
-    from dotenv import load_dotenv
     import json
-
-    load_dotenv()
 
     document_a_id = request.data.get("document_a_id")
     document_b_id = request.data.get("document_b_id")
     project_name = request.data.get("project_name")
-    document_a_type=request.data.get("document_a").get("path").split("\\")[0]
-    document_b_type=request.data.get("document_b").get("path").split("\\")[0]
+    document_a_type = request.data.get("document_a").get("path").split("\\")[0]
+    document_b_type = request.data.get("document_b").get("path").split("\\")[0]
     print(f"Received compare_documents_with_embeddings request: document_a_id={document_a_id}, document_b_id={document_b_id}, project_name={project_name}, document_a={document_a_type}, document_b={document_b_type}")
     print(f"compare_documents_with_embeddings called with: document_a_id={document_a_id}, document_b_id={document_b_id}, project_name={project_name}")
 
@@ -909,11 +906,11 @@ def compare_documents_with_embeddings(request):
             doc_a = Document.objects.get(id=document_a_id)
         if not doc_b:
             doc_b = Document.objects.get(id=document_b_id)
-        
+
         print("project name:", project_name)
 
-        chunks_a = get_document_chunks(str(doc_a.id), collection_name="project_" + project_name + "_category_"+document_a_type)
-        chunks_b = get_document_chunks(str(doc_b.id), collection_name="project_" + project_name + "_category_"+document_b_type)
+        chunks_a = get_document_chunks(str(doc_a.id), collection_name="project_" + project_name + "_category_" + document_a_type)
+        chunks_b = get_document_chunks(str(doc_b.id), collection_name="project_" + project_name + "_category_" + document_b_type)
 
         if not chunks_a or not chunks_b:
             return Response({
@@ -922,58 +919,18 @@ def compare_documents_with_embeddings(request):
                 "document_b_has_embeddings": bool(chunks_b),
             }, status=400)
 
-        all_chunks_a = [c["text"] for c in chunks_a]
-        all_chunks_b = [c["text"] for c in chunks_b]
-
-        context_a = "\n\n".join(all_chunks_a[:20])
-        context_b = "\n\n".join(all_chunks_b[:20])
-
-        prompt = f"""You are a legal document comparison assistant. Compare the two contract documents below and identify key differences.
-
-Document A ({doc_a.file_name}):
-{context_a[:15000]}
-
-Document B ({doc_b.file_name}):
-{context_b[:15000]}
-
-Analyze both documents and provide:
-1. A brief summary of what each document covers
-2. Key clauses that differ between the documents
-3. Important clauses that are similar or identical
-4. Any significant legal implications of the differences
-
-Provide your response in JSON format:
-{{
-    "summary": "Brief comparison summary",
-    "differences": [
-        {{
-            "clause": "Name of the clause/section",
-            "text_a": "Text from Document A",
-            "text_b": "Text from Document B",
-            "impact": "Impact of this difference"
-        }}
-    ],
-    "similarities": [
-        {{
-            "clause": "Name of the clause/section",
-            "text": "The similar text"
-        }}
-    ]
-}}"""
-
         try:
-            from openai import OpenAI
+            llm = get_llm()
+            agent = CompareWithEmbeddingsAgent(llm=llm)
+            result = agent.compare(
+                chunks_a=chunks_a,
+                chunks_b=chunks_b,
+                doc_a_name=doc_a.file_name,
+                doc_b_name=doc_b.file_name,
+            )
 
-            client = OpenAI(
-                api_key=os.getenv("OPENROUTER"), base_url="https://openrouter.ai/api/v1"
-            )
-            response = client.chat.completions.create(
-                model="nvidia/nemotron-3-super-120b-a12b:free",
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.3,
-                max_tokens=2000,
-            )
-            ai_result = response.choices[0].message.content
+            messages = result.get("messages", [])
+            ai_result = messages[-1].content if messages else ""
 
             try:
                 result_json = json.loads(ai_result)
