@@ -4,6 +4,7 @@ import logging
 import os
 from dotenv import load_dotenv
 from .chat_agent import MasterAgent
+from langchain_core.messages import HumanMessage,AIMessage
 
 
 load_dotenv()
@@ -65,7 +66,8 @@ def chat(request):
             chat_agent = MasterAgent()
             print(f"Invoking chat agent with message: {message} and context length: {len(context)}")
             result = chat_agent.chat(message=message, context=context)
-            messages = result.get("messages", [])
+            print(f"Chat agent result: {result}")
+            messages = result[0]["messages"]
             answer = messages[-1].content if messages else ""
         except Exception as e:
             logger.error(f"LLM error: {e}")
@@ -77,6 +79,78 @@ def chat(request):
 
     except Exception as e:
         logger.error(f"Chat error: {e}")
+        return Response({"error": str(e)}, status=500)
+
+
+@api_view(["POST"])
+def analyze_risk(request):
+    """Analyze contracts for potential risks by comparing with other documents in the vector database."""
+    from directory_manager.vector_service import search_vectors
+    from directory_manager.models import Document, Project
+
+    project_name = request.data.get("project", "")
+    document_id = request.data.get("document_id")
+
+    if not project_name and not document_id:
+        return Response({"error": "Project or document_id is required"}, status=400)
+
+    try:
+        chat_agent = MasterAgent()
+        collection_name = None
+
+        if document_id:
+            try:
+                doc = Document.objects.get(id=document_id)
+                collection_name = f"project_{doc.project.name}_category_{doc.file_type}"
+                chunks = search_vectors("", collection_name, limit=20)
+                doc_content = " ".join([c.get("text", "") for c in chunks])
+                
+                result = chat_agent.analyze_risk(
+                    document_text=doc_content,
+                    collection_name=collection_name
+                )
+                result["document_name"] = doc.file_name
+            except Document.DoesNotExist:
+                return Response({"error": "Document not found"}, status=404)
+        else:
+            try:
+                project = Project.objects.get(name=project_name)
+                collection_name = f"project_{project_name}_category_Master_Agreements"
+                
+                if "Supporting_Docs" in request.data.get("category", ""):
+                    collection_name = f"project_{project_name}_category_Supporting_Docs"
+                
+                chunks = search_vectors("", collection_name, limit=20)
+                doc_content = " ".join([c.get("text", "") for c in chunks])
+                
+                result = chat_agent.analyze_risk(
+                    document_text=doc_content,
+                    collection_name=collection_name
+                )
+            except Project.DoesNotExist:
+                return Response({"error": "Project not found"}, status=404)
+
+        return Response(result)
+
+    except Exception as e:
+        logger.error(f"Risk analysis error: {e}")
+        return Response({"error": str(e)}, status=500)
+
+
+@api_view(["POST"])
+def research(request):
+    """Research a query using internet search."""
+    query = request.data.get("query", "").strip()
+
+    if not query:
+        return Response({"error": "Query is required"}, status=400)
+
+    try:
+        chat_agent = MasterAgent()
+        result = chat_agent.research(query)
+        return Response(result)
+    except Exception as e:
+        logger.error(f"Research error: {e}")
         return Response({"error": str(e)}, status=500)
 
 

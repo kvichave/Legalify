@@ -1,6 +1,7 @@
 import os
 from typing import Any, Dict, List
 from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.prebuilt import create_react_agent
 
 
 class DeepAgentBase:
@@ -16,25 +17,18 @@ class DeepAgentBase:
         llm: Any,
         system_prompt: str = "",
         checkpointer: Any = None,
+        tools: List[Any] = None,
     ) -> None:
         self.llm = llm
         self.system_prompt = system_prompt
-        # Use provided checkpointer or fall back to in-memory saver
         self.checkpointer = checkpointer if checkpointer is not None else InMemorySaver()
+        self.tools = tools or []
 
-    def build_workflow(self, subagents: List[Dict[str, Any]]):
-        """Create a DeepAgent workflow given a list of subagents.
-
-        Each subagent item should be a dict compatible with the structure used
-        by deepagents.create_deep_agent (e.g., keys: name, description,
-        system_prompt, model).
-        """
-        from deepagents import create_deep_agent  # local import to keep this module lightweight
-
-        workflow = create_deep_agent(
-            subagents=subagents,
+    def build_workflow(self, subagents: List[Dict[str, Any]] = None):
+        """Create a DeepAgent workflow given a list of subagents."""
+        workflow = create_react_agent(
             model=self.llm,
-            system_prompt=self.system_prompt,
-            checkpointer=self.checkpointer,
+            tools=self.tools,
+            prompt=self.system_prompt,
         )
         return workflow
