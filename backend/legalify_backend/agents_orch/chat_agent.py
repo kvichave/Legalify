@@ -37,30 +37,39 @@ from langchain_openai import ChatOpenAI
 import os
 from dotenv import load_dotenv
 load_dotenv()
-llm = ChatOpenAI(
-    model="DeepSeek-V3.2",
-    base_url="https://agent-factory.openai.azure.com/openai/v1/",
-    api_key=os.getenv("AZURE_MODEL"),
-    temperature=0,
-)
-
+# llm = ChatOpenAI(
+#     model="DeepSeek-V3.2",
+#     base_url="https://agent-factory.openai.azure.com/openai/v1/",
+#     api_key=os.getenv("AZURE_MODEL"),
+#     temperature=0,
+# )
 
 
 
 class MasterAgent:
+    llm = ChatOpenAI(
+    model="DeepSeek-V3.2",
+    base_url="https://agentic-p.openai.azure.com/openai/v1",
+    api_key=os.getenv("AZURE_MODEL"),
+    temperature=0,
+)
+    memory=InMemoryStore()
 
     def __init__(self):
+        print("Initializing MasterAgent with LLM and subagents")
         self.agent = create_deep_agent(
-            model=llm,
+            model=self.llm,
             subagents=SUBAGENTS,
             system_prompt=CHAT_SYSTEM_PROMPT,
-            memory = InMemorySaver()
+            memory = self.memory
+            
 
         )
+        print("MasterAgent initialized with LLM and subagents"),
     def setup(self):
         self.agent = create_deep_agent(
- model=llm,
-                         subagents=SUBAGENTS,
+            model=self.llm,
+            subagents=SUBAGENTS,
             system_prompt=CHAT_SYSTEM_PROMPT,
             checkpointer=self.memory
 
@@ -69,8 +78,16 @@ class MasterAgent:
         prompt = f"""Context from legal documents:
         {context}
 
-        User Question: {message}
+        User Query: {message}
 
-        Answer:"""
+        Answer:"" """
+
+        config = {
+        "configurable": {"thread_id": "session_001"},
+        "recursion_limit": 200 
+    }
+        result = self.agent.invoke(
+    {"messages": [{"role": "user", "content": prompt}] }, config=config),
+        return result
 
         

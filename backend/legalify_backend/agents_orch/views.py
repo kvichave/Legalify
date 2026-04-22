@@ -3,7 +3,7 @@ from rest_framework.response import Response
 import logging
 import os
 from dotenv import load_dotenv
-from .chat_agent import ChatAgent
+from .chat_agent import MasterAgent
 
 
 load_dotenv()
@@ -61,9 +61,8 @@ def chat(request):
         sources = list(set([c.get("source", "Unknown") for c in all_chunks]))
 
         try:
-            llm = get_llm()
             print("LLM initialized successfully")
-            chat_agent = ChatAgent(llm=llm)
+            chat_agent = MasterAgent()
             print(f"Invoking chat agent with message: {message} and context length: {len(context)}")
             result = chat_agent.chat(message=message, context=context)
             messages = result.get("messages", [])
