@@ -59,8 +59,6 @@ Risk Categories:
 
 IMPORTANT: Keep format consistent. Use "•" for risks, "✓" for positive items, "-" for missing clauses."""
 
-RESEARCH_PROMPT = """You are a great researcher. Search the internet for accurate, up-to-date information. Always cite your sources. Be thorough but concise in your research summaries."""
-
 
 # -----------------------------
 # CREATE SUBAGENTS DIRECTLY
@@ -104,10 +102,162 @@ risk_analyzer_agent = create_agent(
     system_prompt=RISK_ANALYSIS_PROMPT,
 )
 
+
+RESEARCH_SYSTEM_PROMPT = """You are an advanced research agent that conducts thorough, multi-step research on legal topics.
+
+Your workflow:
+1. PLAN: Break down the query into search sub-questions
+2. SEARCH: Use web search to find relevant information
+3. EXTRACT: Gather key facts from search results
+4. SYNTHESIZE: Combine findings and reason about the answer
+5. CITATE: Format sources with proper citations [source: url]
+
+OUTPUT FORMAT:
+===
+QUERY: [original question]
+PLAN: [list of sub-questions to research]
+
+SEARCH RESULTS:
+[1] [Title]
+    Source: [url]
+    Key findings: [relevant information]
+
+[2] [Next result...]
+
+SYNTHESIS:
+[Comprehensive answer based on findings]
+
+SOURCES:
+- [1] [Title] - [url]
+- [2] [Next source...]
+===
+
+Always cite your sources. Be thorough and accurate."""
+
+
+@tool
+def search_web(query: str, num_results: int = 5) -> str:
+    """Search the web for legal information, regulations, or case law.
+    
+    Args:
+        query: Search query
+        num_results: Number of results to return (default 5)
+    
+    Returns:
+        Search results with titles, URLs, and snippets
+    """
+    try:
+
+        from ddgs import DDGS
+        print(f"Performing web search for query: {query} with num_results: {num_results}")
+        ddgs = DDGS(api_url="http://localhost:4479", spawn_api=True)
+        results = ddgs.text(query, max_results=num_results, region="in-en")
+        formatted = []
+        for r in results:
+            formatted.append({
+                "title": r.get("title", ""),
+                "url": r.get("href", ""),
+                "content": r.get("body", "")[:800]
+            })
+            print(f"Search result: {formatted}")
+        return str(formatted)
+    except Exception as e:
+        return f"Search error: {str(e)}"
+
+
+@tool
+def extract_content(url: str) -> str:
+    """Extract full content from a web page for detailed analysis.
+    
+    Args:
+        url: The URL to extract content from
+    
+    Returns:
+        Extracted text content from the page
+    """
+    try:
+        from langchain_community.document_loaders import SeleniumURLLoader
+        loader = SeleniumURLLoader(urls=[url])
+        docs = loader.load()
+        return docs[0].page_content[:5000] if docs else "No content found"
+    except Exception as e:
+        return f"Extraction error: {str(e)}"
+
+
+@tool
+def plan_research(query: str) -> str:
+    """Plan research strategy by breaking down complex queries into sub-questions.
+    
+    Args:
+        query: The research query to plan for
+    
+    Returns:
+        Structured plan with sub-questions to investigate
+    """
+    prompt = f"""Break down this research query into 3-5 specific sub-questions that need to be answered to provide a comprehensive response:
+
+QUERY: {query}
+
+Respond with a numbered list of sub-questions, each on its own line. Keep them focused and specific."""
+    
+    response = llm.invoke(prompt)
+    return response.content if hasattr(response, 'content') else str(response)
+
+
+@tool
+def synthesize_findings(query: str, findings: str) -> str:
+    """Synthesize multiple research findings into a coherent answer.
+    
+    Args:
+        query: Original research question
+        findings: Combined search results and extracted content
+    
+    Returns:
+        Synthesized answer with reasoning
+    """
+    prompt = f"""Based on the following research findings, provide a comprehensive answer to the query.
+
+QUERY: {query}
+
+FINDINGS:
+{findings}
+
+SYNTHESIS:
+- Combine information from multiple sources
+- Identify consensus and conflicting information
+- Provide specific examples and details
+- Address nuances and limitations
+- Explain your reasoning"""
+    
+    response = llm.invoke(prompt)
+    return response.content if hasattr(response, 'content') else str(response)
+
+
+@tool
+def format_citations(sources: str) -> str:
+    """Format research sources with proper citations.
+    
+    Args:
+        sources: List of source URLs and titles
+    
+    Returns:
+        Formatted citation list
+    """
+    prompt = f"""Format these sources with proper citations in the format [source number](url):
+
+SOURCES:
+{sources}
+
+CITATIONS:"""
+    
+    response = llm.invoke(prompt)
+    return response.content if hasattr(response, 'content') else str(response)
+
+
 research_agent = create_agent(
     model=llm,
-    tools=[],
-    system_prompt=RESEARCH_PROMPT,
+    tools=[search_web, extract_content, plan_research, synthesize_findings, format_citations],
+    system_prompt=RESEARCH_SYSTEM_PROMPT,
 )
 
 # -----------------------------
