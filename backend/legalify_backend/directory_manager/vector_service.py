@@ -62,13 +62,16 @@ def store_document_vector(document_id, file_path, collection_name="legal_documen
     try:
         client = get_qdrant_client()
         model = get_embedding_model()
+        print("collection ::::",client.collection_exists(collection_name=collection_name))
+        if client.collection_exists(collection_name=collection_name) is False:
+            print(f"Collection '{collection_name}' does not exist. Creating collection.")
 
-        client.recreate_collection(
-            collection_name=collection_name,
-            vectors_config=VectorParams(
-                size=model.get_sentence_embedding_dimension(), distance=Distance.COSINE
-            ),
-        )
+            client.recreate_collection(
+                collection_name=collection_name,
+                vectors_config=VectorParams(
+                    size=model.get_sentence_embedding_dimension(), distance=Distance.COSINE
+                ),
+            )
 
         text = extract_text_from_file(file_path)
         if not text.strip():
@@ -99,7 +102,7 @@ def store_document_vector(document_id, file_path, collection_name="legal_documen
             points=points,
         )
 
-        logger.info(f"Stored {len(points)} chunks for document {document_id} in Qdrant")
+        print(f"Stored {len(points)} chunks for document {document_id} in Qdrant")
         return True
 
     except Exception as e:

@@ -107,7 +107,8 @@ def analyze_risk(request):
                 
                 result = chat_agent.analyze_risk(
                     document_text=doc_content,
-                    collection_name=collection_name
+                    collection_name=collection_name,
+                    project_name=doc.project.name
                 )
                 result["document_name"] = doc.file_name
             except Document.DoesNotExist:

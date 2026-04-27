@@ -29,10 +29,12 @@ def save_in_postgress(file_path, project_id, file_type):
             },
         )
         print(f"Document created with status=processing: {document.id}")
-
+        collection_name = "project_"+project_id+"_category_"+file_type
+        print("from save_in_postgress, collection_name ::::", collection_name)
         store_document_vector(
-            document.id, file_path, collection_name=f"project_{project_id}_category_{file_type}"
+            document.id, file_path, collection_name=str(collection_name)
         )
+
 
         document.status = "ready"
         document.metadata["status"] = "ready"
