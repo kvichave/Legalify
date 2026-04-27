@@ -26,19 +26,38 @@ Instructions:
 
 RISK_ANALYSIS_PROMPT = """You are a legal risk analyst specializing in contract analysis. Your role is to identify, categorize, and assess risks within legal documents.
 
-Risk Categories to Analyze:
-1. FINANCIAL RISKS - Payment terms, penalties, interest rates, financial obligations
-2. LEGAL/LIABILITY RISKS - Liability caps, indemnification, force majeure, dispute resolution
-3. OPERATIONAL RISKS - Termination clauses, assignment restrictions, service level requirements
-4. REGULATORY/COMPLIANCE RISKS - Compliance requirements, data protection, audit rights
-5. COMMERCIAL RISKS - Pricing changes, exclusivity, non-compete, market-related terms
+OUTPUT FORMAT - Use this EXACT format for your response:
 
-For each risk identified, provide:
-- Risk Category
-- Risk Description
-- Severity (High/Medium/Low)
-- Location in Document
-- Recommendation"""
+===
+SUMMARY
+[Overall risk level: HIGH/MEDIUM/LOW] - [1-2 sentence summary]
+
+RISKS
+• [RISK NAME]
+  Category: [CATEGORY]
+  Severity: [HIGH/MEDIUM/LOW] | Impact: [FINANCIAL/LEGAL/OPERATIONAL/REGULATORY/COMMERCIAL]
+  Current Clause: "[exact quote from document]"
+  Analysis: [how this compares to standard terms]
+  Recommendation: [specific action to take]
+
+• [Next risk...]
+
+MISSING_CLAUSES
+- [Clause that should be added]
+
+POSITIVE_CLAUSES
+✓ [Good clause found in document]
+
+===
+
+Risk Categories:
+1. FINANCIAL - Payment terms, penalties, interest, obligations
+2. LEGAL - Liability, indemnification, force majeure, disputes
+3. OPERATIONAL - Termination, assignment, service levels
+4. REGULATORY - Compliance, data protection, audit
+5. COMMERCIAL - Pricing, exclusivity, non-compete
+
+IMPORTANT: Keep format consistent. Use "•" for risks, "✓" for positive items, "-" for missing clauses."""
 
 RESEARCH_PROMPT = """You are a great researcher. Search the internet for accurate, up-to-date information. Always cite your sources. Be thorough but concise in your research summaries."""
 
@@ -158,40 +177,41 @@ Answer:"""
     def analyze_risk(self, document_text: str, collection_name: str = None, project_name: str = None) -> Dict[str, Any]:
             config = {"configurable": {"thread_id": "risk_analysis"}}
             
-            prompt = f"""You are a legal risk analyst. Analyze this document for risks.
+            prompt = f"""Analyze this legal document for risks.
 
-    CURRENT DOCUMENT:
-    {document_text[:8000]}
+DOCUMENT:
+{document_text[:8000]}
 
-    CURRENT DOCUMENT COLLECTION NAME: {collection_name}
+INSTRUCTIONS:
+1. First, use search_legal_documents tool to find related legal documents for comparison
+   - Use collection name: "project_{project_name}_category_Master_Agreements" (or SOW or Supporting_Docs if more appropriate)
+   for example-project_{project_name}_category_SOW, project_{project_name}_category_Supporting_Docs
+   - Search for key terms/clauses from the document
 
-    First, use the search_legal_documents tool to find related legal documents for comparison.
-    find similar documents in the all collection that relate to the content of the current document. Use the following query format for the tool: "Find documents similar to [key terms or clauses from the document]".
+2. Output your analysis in this EXACT format:
 
-    you can use the following format for the collection name when invoking the tool: "project_{project_name}_category_file_type"
-    file_type can be Master_Agreements, SOW, or Supporting_Docs 
-    Search for key terms, clauses, or concepts from the document to find similar past documents.
+===
+SUMMARY
+[Overall risk level: HIGH/MEDIUM/LOW] - [1-2 sentence summary]
 
-    Then provide a structured risk analysis:
+RISKS
+• [RISK NAME]
+  Category: [CATEGORY]
+  Severity: [HIGH/MEDIUM/LOW] | Impact: [FINANCIAL/LEGAL/OPERATIONAL/REGULATORY/COMMERCIAL]
+  Current Clause: "[exact quote from document]"
+  Analysis: [how this compares to similar documents/industry standards]
+  Recommendation: [specific action to take]
 
-    ## RISK ASSESSMENT SUMMARY
-    [High/Medium/Low overall risk rating with brief explanation]
+• [Next risk...]
 
-    ## IDENTIFIED RISKS
-    For each risk:
-    ### [Risk Name]
-    - **Category:** [Financial/Legal/Operational/Regulatory/Commercial]
-    - **Severity:** [High/Medium/Low]
-    - **Current Clause:** [Quote the specific clause from the document]
-    - **Comparison:** [How this compares to similar documents/industry standards]
-    - **Recommendation:** [Specific action to take]
+MISSING_CLAUSES
+- [Clause that should be added]
 
-    ## MISSING PROTECTIONS
-    [Clauses present in similar documents but absent here]
+POSITIVE_CLAUSES
+✓ [Good clause found in document]
+===
 
-    ## POSITIVE ASPECTS
-    [Well-structured or favorable clauses]
-    """
+Be specific with quotes from the document. Use consistent formatting."""
             
             result = self.risk_analyzer.invoke(
                 {"messages": [{"role": "user", "content": prompt}]},
